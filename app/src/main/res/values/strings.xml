@@ -2,4 +2,5 @@
     <string name="app_name">Wyoming Android TTS</string>
     <string name="notification_title">Wyoming TTS Service</string>
     <string name="notification_message">Service is running to provide TTS.</string>
+    <string name="notification_message_listening">Listening on port %1$d for TTS requests.</string>
 </resources>
