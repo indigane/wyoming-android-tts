@@ -47,6 +47,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0") // Check for latest stable version
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0") // For lifecycle awareness, useful for services
+    implementation("com.google.android.material:material:1.11.0")
     // For JSON parsing later (Phase 2), we might add:
     // implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
 
