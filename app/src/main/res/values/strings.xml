@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Wyoming Android TTS</string>
+    <string name="notification_title">Wyoming TTS Service</string>
+    <string name="notification_message">Service is running to provide TTS.</string>
+</resources>
