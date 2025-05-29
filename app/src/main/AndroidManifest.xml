@@ -24,13 +24,13 @@
             android:exported="false"
             android:foregroundServiceType="dataSync"
         />
-        <queries>
-            <intent>
-                <action android:name="android.speech.tts.TextToSpeech.Engine.ACTION_GET_SAMPLE_TEXT" />
-            </intent>
-            <intent>
-                <action android:name="android.speech.tts.TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE" />
-            </intent>
-        </queries>
     </application>
+    <queries>
+        <intent>
+            <action android:name="android.speech.tts.TextToSpeech.Engine.ACTION_GET_SAMPLE_TEXT" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.tts.TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE" />
+        </intent>
+    </queries>
 </manifest>
