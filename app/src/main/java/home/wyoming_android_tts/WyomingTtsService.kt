@@ -8,9 +8,7 @@ import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 import org.json.JSONException
 import org.json.JSONObject
-import java.io.BufferedReader
 import java.io.IOException
-import java.io.InputStreamReader
 import java.net.ServerSocket
 import java.net.Socket
 
@@ -82,39 +80,38 @@ class WyomingTtsService : Service() {
     private suspend fun handleClient(clientSocket: Socket) {
         withContext(Dispatchers.IO) {
             try {
-                val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
-                var line: String?
-                while (clientSocket.isConnected && reader.readLine().also { line = it } != null) {
-                    AppLogger.log("RECV: $line")
-                    try {
-                        val jsonEvent = JSONObject(line!!)
-                        when (jsonEvent.optString("type")) {
-                            "synthesize" -> {
-                                val text = jsonEvent.optString("text", "no text found")
-                                val voice = jsonEvent.optJSONObject("voice")
-                                AppLogger.log("Synthesize request received. Text: '$text'")
-                                if (voice != null) AppLogger.log("Voice params: $voice")
+                clientSocket.getInputStream().bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        AppLogger.log("RECV: $line")
+                        try {
+                            val jsonEvent = JSONObject(line)
+                            when (jsonEvent.optString("type")) {
+                                "synthesize" -> {
+                                    val text = jsonEvent.optString("text", "no text found")
+                                    val voice = jsonEvent.optJSONObject("voice")
+                                    AppLogger.log("Synthesize request received. Text: '$text'")
+                                    if (voice != null) AppLogger.log("Voice params: $voice")
 
-                                // TODO: Phase 3 & 4 - TTS call and audio streaming
+                                    // TODO: Phase 3 & 4 - TTS call and audio streaming
+                                }
+                                "ping" -> {
+                                    AppLogger.log("Ping received, ponging back.")
+                                    // TODO: writer.write("{\"type\":\"pong\"}\n")
+                                }
+                                else -> AppLogger.log("Received unknown event type: ${jsonEvent.optString("type")}", AppLogger.LogLevel.WARN)
                             }
-                            "ping" -> {
-                                // A simple ping/pong can be useful for checking connection
-                                AppLogger.log("Ping received, ponging back.")
-                                // TODO: writer.write("{\"type\":\"pong\"}\n")
-                            }
-                            else -> AppLogger.log("Received unknown event type: ${jsonEvent.optString("type")}", AppLogger.LogLevel.WARN)
+                        } catch (e: JSONException) {
+                            AppLogger.log("Error parsing JSON from client: $line", AppLogger.LogLevel.ERROR)
                         }
-                    } catch (e: JSONException) {
-                        AppLogger.log("Error parsing JSON from client: $line", AppLogger.LogLevel.ERROR)
                     }
                 }
             } catch (e: IOException) {
-                 AppLogger.log("Client connection error: ${e.message}", AppLogger.LogLevel.ERROR)
+                AppLogger.log("Client connection error: ${e.message}", AppLogger.LogLevel.ERROR)
             } finally {
                 try {
                     clientSocket.close()
                 } catch (e: IOException) {
-                    // Ignore
+                    // Ignore, already closing
                 }
                 AppLogger.log("Client disconnected: ${clientSocket.inetAddress?.hostAddress}")
             }
