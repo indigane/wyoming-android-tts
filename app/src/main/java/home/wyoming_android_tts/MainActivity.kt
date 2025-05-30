@@ -1,6 +1,7 @@
 package home.wyoming_android_tts
 
-import android.Manifest
+import android.Manifest // Keep this import
+import android.app.Activity // CHANGE THIS IMPORT
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -12,17 +13,18 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
+// import androidx.appcompat.app.AppCompatActivity // REMOVE THIS IMPORT
+import androidx.core.content.ContextCompat // Keep this import
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() { // CHANGE AppCompatActivity to Activity HERE
 
     private lateinit var logTextView: TextView
     private lateinit var logScrollView: ScrollView
 
     // Activity Result Launcher for notification permission request
+    // This should still work with android.app.Activity as it's part of ActivityResultCaller
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
             if (isGranted) {
@@ -35,7 +37,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        setContentView(R.layout.activity_main) // This line should still be fine
 
         logTextView = findViewById(R.id.logTextView)
         logScrollView = findViewById(R.id.logScrollView)
@@ -43,7 +45,6 @@ class MainActivity : AppCompatActivity() {
         val stopButton: Button = findViewById(R.id.buttonStopService)
         val clearButton: Button = findViewById(R.id.buttonClearLogs)
 
-        // Make the TextView scrollable
         logTextView.movementMethod = ScrollingMovementMethod()
 
         startButton.setOnClickListener {
@@ -60,10 +61,8 @@ class MainActivity : AppCompatActivity() {
             logTextView.text = ""
         }
 
-        // Collect log messages from the AppLogger and display them
-        lifecycleScope.launch {
+        lifecycleScope.launch { // lifecycleScope is available via androidx.lifecycle:lifecycle-runtime-ktx
             AppLogger.logMessages.collect { message ->
-                // Append message and scroll to the bottom
                 logTextView.append("\n$message")
                 logScrollView.post { logScrollView.fullScroll(View.FOCUS_DOWN) }
             }
@@ -79,6 +78,7 @@ class MainActivity : AppCompatActivity() {
                 ) == PackageManager.PERMISSION_GRANTED -> {
                     startTtsService()
                 }
+                // shouldShowRequestPermissionRationale is a method of Activity, so it's fine
                 shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) -> {
                     requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
