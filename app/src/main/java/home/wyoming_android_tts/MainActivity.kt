@@ -1,103 +1,65 @@
 package home.wyoming_android_tts
 
-import android.Manifest // Keep this import
-import android.app.Activity // CHANGE THIS IMPORT
+import android.app.Activity // Using basic Activity
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
-import android.text.method.ScrollingMovementMethod
-import android.view.View
 import android.widget.Button
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
-// import androidx.appcompat.app.AppCompatActivity // REMOVE THIS IMPORT
-import androidx.core.content.ContextCompat // Keep this import
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.launch
 
-class MainActivity : Activity() { // CHANGE AppCompatActivity to Activity HERE
+// Removed imports for Manifest, PackageManager, Build, ActivityResultContracts, ContextCompat, lifecycleScope, launch
+
+class MainActivity : Activity() { // Extends basic Activity
 
     private lateinit var logTextView: TextView
-    private lateinit var logScrollView: ScrollView
-
-    // Activity Result Launcher for notification permission request
-    // This should still work with android.app.Activity as it's part of ActivityResultCaller
-    private val requestPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                Toast.makeText(this, "Notification permission granted", Toast.LENGTH_SHORT).show()
-                startTtsService()
-            } else {
-                Toast.makeText(this, "Notification permission is required to run the service", Toast.LENGTH_LONG).show()
-            }
-        }
+    // private lateinit var logScrollView: ScrollView // ScrollView itself doesn't need special handling here
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main) // This line should still be fine
+        // The critical line we are testing for the original theme crash:
+        setContentView(R.layout.activity_main)
 
         logTextView = findViewById(R.id.logTextView)
-        logScrollView = findViewById(R.id.logScrollView)
+        // logScrollView = findViewById(R.id.logScrollView) // Not strictly needed to assign if not manipulating directly
+
         val startButton: Button = findViewById(R.id.buttonStartService)
         val stopButton: Button = findViewById(R.id.buttonStopService)
         val clearButton: Button = findViewById(R.id.buttonClearLogs)
 
-        logTextView.movementMethod = ScrollingMovementMethod()
+        // Log display will not update automatically from AppLogger for this diagnostic version
+        // because we've removed lifecycleScope and its collector.
+        // We'll just log that the activity tried to create.
+        logTextView.text = "Diagnostic MainActivity started.\nIn-app log updates are temporarily disabled.\nCheck system Logcat if AppLogger is used by service."
+        AppLogger.log("Basic Diagnostic MainActivity onCreate completed.")
+
 
         startButton.setOnClickListener {
-            askForNotificationPermission()
+            AppLogger.log("Start Service button clicked (functionality limited in diagnostic mode).")
+            Toast.makeText(this, "Service start temporarily simplified for diagnostic", Toast.LENGTH_LONG).show()
+            // For this diagnostic, we'll directly try to start the service without permission checks.
+            // This might fail on Android 13+ if notifications aren't already allowed,
+            // but our main goal is to see if the Activity itself launches.
+            val serviceIntent = Intent(this, WyomingTtsService::class.java)
+            try {
+                // startForegroundService is available on android.app.Activity from API 26
+                startForegroundService(serviceIntent)
+                AppLogger.log("Attempted to start service from diagnostic MainActivity.")
+            } catch (e: Exception) {
+                AppLogger.log("Error trying to start service from diagnostic MainActivity: ${e.message}", AppLogger.LogLevel.ERROR)
+                Toast.makeText(this, "Error starting service: ${e.message}", Toast.LENGTH_LONG).show()
+            }
         }
 
         stopButton.setOnClickListener {
             val serviceIntent = Intent(this, WyomingTtsService::class.java)
             stopService(serviceIntent)
-            AppLogger.log("Stop service request sent from UI.")
+            AppLogger.log("Stop service request sent from UI (diagnostic Activity).")
+            Toast.makeText(this, "Stop service request sent", Toast.LENGTH_SHORT).show()
         }
 
         clearButton.setOnClickListener {
-            logTextView.text = ""
+            logTextView.text = "Logs cleared (manual display only in diagnostic).\n"
         }
-
-        lifecycleScope.launch { // lifecycleScope is available via androidx.lifecycle:lifecycle-runtime-ktx
-            AppLogger.logMessages.collect { message ->
-                logTextView.append("\n$message")
-                logScrollView.post { logScrollView.fullScroll(View.FOCUS_DOWN) }
-            }
-        }
-    }
-
-    private fun askForNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            when {
-                ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED -> {
-                    startTtsService()
-                }
-                // shouldShowRequestPermissionRationale is a method of Activity, so it's fine
-                shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) -> {
-                    requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
-                else -> {
-                    requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
-            }
-        } else {
-            startTtsService()
-        }
-    }
-
-    private fun startTtsService() {
-        val serviceIntent = Intent(this, WyomingTtsService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
-        }
-        AppLogger.log("Start service request sent from UI.")
     }
 }
