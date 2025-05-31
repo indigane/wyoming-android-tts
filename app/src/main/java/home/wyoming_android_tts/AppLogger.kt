@@ -13,7 +13,7 @@ import java.util.Locale
  */
 object AppLogger {
     private const val TAG = "WyomingApp"
-    
+
     // A "hot" flow that broadcasts log messages to all collectors.
     // Replays the last 50 messages to new collectors so they get recent history.
     private val _logMessages = MutableSharedFlow<String>(replay = 50)

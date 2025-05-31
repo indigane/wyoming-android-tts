@@ -96,7 +96,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                                 val textToSynthesize = dataJson.optString("text", "")
                                 val voiceInfo = dataJson.optJSONObject("voice")
                                 val voiceName = voiceInfo?.optString("name")
-                                
+
                                 AppLogger.log("Processing Synthesize: Text='${textToSynthesize}', Voice='${voiceName ?: "default"}'")
 
                                 if (textToSynthesize.isNotEmpty()) {
@@ -137,7 +137,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             }
         }
     }
-    
+
     private fun getTtsInfoDataJson(): JSONObject {
         // This function now creates the large "data" part of the info event
         val ttsImplInfo = JSONObject()
@@ -158,7 +158,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                     val voiceInfo = JSONObject()
                     voiceInfo.put("name", voice.name) // This name should be used as 'id' by client
                     voiceInfo.put("description", "Android System Voice: ${voice.name}")
-                    voiceInfo.put("attribution", JSONObject().apply { 
+                    voiceInfo.put("attribution", JSONObject().apply {
                         put("name", "Android OS")
                         put("url", "https://source.android.com/")
                     })
@@ -167,7 +167,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                     voiceInfo.put("version", JSONObject.NULL as Any?) // Android API doesn't provide voice version
                     voiceInfo.put("languages", JSONArray().put(voice.locale.toLanguageTag()))
                     voiceInfo.put("speakers", JSONObject.NULL as Any?) // Android API doesn't provide speaker info
-                    
+
                     voicesArray.put(voiceInfo)
                 }
             } catch (e: Exception) {
@@ -188,7 +188,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         dataObject.put("wake", JSONArray())
         dataObject.put("mic", JSONArray())
         dataObject.put("snd", JSONArray())
-        
+
         return dataObject
     }
 
@@ -289,7 +289,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             AppLogger.log("[TTS] synthesizeToFile call successful for $utteranceId. Waiting for onDone/onError callback.", AppLogger.LogLevel.INFO)
         }
     }
-    
+
     private suspend fun streamWavFile(socket: Socket, wavFile: File) {
         var fileInputStream: FileInputStream? = null
         try {
