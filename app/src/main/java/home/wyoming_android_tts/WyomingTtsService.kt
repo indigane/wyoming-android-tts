@@ -428,10 +428,10 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         stream.flush()
 
         if (length == 0) {
-            AppLogger.log("SENT: Final empty audio-chunk with header: ${jsonHeaderObject.trim()}", AppLogger.LogLevel.DEBUG)
+            AppLogger.log("SENT: Final empty audio-chunk with header: ${jsonHeaderString.trim()}", AppLogger.LogLevel.DEBUG)
         } else {
             // Optionally log the header for non-empty chunks too, can be verbose
-            AppLogger.log("SENT: Audio-chunk header: ${jsonHeaderObject.trim()} with $length bytes payload", AppLogger.LogLevel.DEBUG)
+            AppLogger.log("SENT: Audio-chunk header: ${jsonHeaderString.trim()} with $length bytes payload", AppLogger.LogLevel.DEBUG)
         }
     }
 
