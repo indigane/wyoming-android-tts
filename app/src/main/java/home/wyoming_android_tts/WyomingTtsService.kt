@@ -367,8 +367,12 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                 writeAudioChunk(outputStream, buffer, bytesRead, wavInfo.sampleRate, audioWidth, wavInfo.channels)
             }
 
+            delay(10000L)
+
             // 3. Send audio-stop event
             writeAudioStop(outputStream)
+
+            delay(10000L)
 
             AppLogger.log("Finished streaming ${wavFile.name} to client.")
 
@@ -388,6 +392,8 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                 }
             }
         }
+
+        delay(10000L)
     }
 
     private fun parseWavHeader(stream: FileInputStream): WavInfo? {
