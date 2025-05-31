@@ -46,144 +46,166 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     private val ttsUtteranceRequests = mutableMapOf<String, CompletableDeferred<File?>>()
     private data class WavInfo(val sampleRate: Int, val channels: Int, val bitsPerSample: Int)
 
+    private fun bytesToHexString(bytes: ByteArray, count: Int = bytes.size): String {
+        return bytes.take(Math.min(count, bytes.size)).joinToString("") { "%02x".format(it) }
+    }
+
     private suspend fun handleClient(clientSocket: Socket) {
         withContext(Dispatchers.IO) {
             val clientAddress = clientSocket.inetAddress?.hostAddress ?: "unknown"
-            AppLogger.log("Handling client: $clientAddress")
+            AppLogger.log("DiagHandleClient: Handling client: $clientAddress")
 
             try {
                 clientSocket.soTimeout = 30000 // 30 seconds read timeout
                 clientSocket.tcpNoDelay = true
 
-                // We need the raw InputStream for byte-counted payloads,
-                // and a BufferedReader for line-based JSON headers.
                 val inputStream = clientSocket.getInputStream()
-                val reader = BufferedReader(InputStreamReader(inputStream, StandardCharsets.UTF_8))
-                val outputStream = clientSocket.getOutputStream()
+                val outputStream = clientSocket.getOutputStream() // Keep for responses
 
+                // Loop to handle multiple events on the same connection if client supports it
+                // For this diagnostic, we'll focus on the first sequence of header + data
                 while (isActive && clientSocket.isConnected && !clientSocket.isClosed) {
-                    val line = try {
-                        reader.readLine()
-                    } catch (e: java.net.SocketTimeoutException) {
-                        AppLogger.log("Client $clientAddress timed out waiting for line. Closing connection.", AppLogger.LogLevel.WARN)
-                        break
-                    }
 
-                    if (line == null) {
-                        AppLogger.log("Client $clientAddress closed connection (readLine returned null).", AppLogger.LogLevel.INFO)
-                        break
-                    }
+                    // --- Diagnostic: Read header byte by byte ---
+                    val headerByteStream = java.io.ByteArrayOutputStream()
+                    var byteReadFromStream: Int
+                    var currentHeaderByteCount = 0
+                    AppLogger.log("DiagHandleClient: Attempting to read header byte by byte from $clientAddress...")
 
-                    AppLogger.log("RECV LINE from $clientAddress: $line")
                     try {
-                        val headerJson = JSONObject(line)
-                        val eventType = headerJson.optString("type")
-                        val dataLength = headerJson.optInt("data_length", 0)
-                        var eventDataJson = headerJson // Default if no separate data payload
-
-                        if (dataLength > 0) {
-                            AppLogger.log("Data payload expected from $clientAddress, length: $dataLength bytes.")
-                            val dataBytes = ByteArray(dataLength)
-                            var totalBytesRead = 0
-                            var bytesReadThisTurn: Int
-
-                            // Loop to ensure all dataLength bytes are read directly from the InputStream
-                            while (totalBytesRead < dataLength) {
-                                // Read directly from the raw inputStream, NOT the BufferedReader,
-                                // as the BufferedReader might have its own buffering independent of readLine()
-                                // and we need precise byte counts here.
-                                bytesReadThisTurn = inputStream.read(dataBytes, totalBytesRead, dataLength - totalBytesRead)
-                                if (bytesReadThisTurn == -1) {
-                                    throw IOException("Unexpected end of stream while reading data payload bytes from $clientAddress. Expected $dataLength, got $totalBytesRead")
-                                }
-                                totalBytesRead += bytesReadThisTurn
+                        while (currentHeaderByteCount < 8192) { // Safety limit for header size
+                            byteReadFromStream = inputStream.read() // Reads one byte
+                            if (byteReadFromStream == -1) {
+                                AppLogger.log("DiagHandleClient: EOF reached while reading header from $clientAddress after $currentHeaderByteCount bytes.", AppLogger.LogLevel.WARN)
+                                break
                             }
-
-                            // Log a snippet of the raw bytes for debugging
-                            val byteSnippetForLog = dataBytes.take(Math.min(totalBytesRead, 64)).joinToString("") { "%02x".format(it) }
-                            AppLogger.log("RECV DATA PAYLOAD BYTES ($totalBytesRead bytes, snippet hex): $byteSnippetForLog")
-
-                            val dataPayloadString = String(dataBytes, 0, totalBytesRead, StandardCharsets.UTF_8)
-                            AppLogger.log("RECV DATA PAYLOAD STRING: $dataPayloadString")
-                            try {
-                                eventDataJson = JSONObject(dataPayloadString)
-                            } catch (e: JSONException) {
-                                 AppLogger.log("Failed to parse data payload (from bytes) as JSON: '$dataPayloadString', error: ${e.message}", AppLogger.LogLevel.ERROR)
-                                 continue
+                            currentHeaderByteCount++
+                            headerByteStream.write(byteReadFromStream)
+                            if (byteReadFromStream == '\n'.code) {
+                                break // Newline found, header complete
                             }
                         }
+                    } catch (e: java.net.SocketTimeoutException) {
+                        AppLogger.log("DiagHandleClient: Timeout reading header byte from $clientAddress after $currentHeaderByteCount bytes.", AppLogger.LogLevel.ERROR)
+                        break // Break main while loop
+                    }
 
-                        // Now use eventDataJson for processing the actual content of the event
+                    if (currentHeaderByteCount == 0 || byteReadFromStream == -1 && headerByteStream.size() == 0) {
+                        AppLogger.log("DiagHandleClient: No header data received or immediate EOF from $clientAddress. Closing.", AppLogger.LogLevel.INFO)
+                        break // Nothing to process, break main while loop
+                    }
+
+                    val headerBytes = headerByteStream.toByteArray()
+                    val headerLine = String(headerBytes, StandardCharsets.UTF_8).trimEnd() // Trim trailing newline for JSON
+                    AppLogger.log("DiagHandleClient: RECV HEADER LINE ($currentHeaderByteCount bytes): '$headerLine'")
+                    AppLogger.log("DiagHandleClient: RECV HEADER HEX: ${bytesToHexString(headerBytes)}")
+
+                    var eventType: String? = null
+                    var dataLength = 0
+                    var headerJson: JSONObject? = null
+                    var eventDataJson: JSONObject? = null // Initialize to null
+
+                    try {
+                        headerJson = JSONObject(headerLine)
+                        eventType = headerJson.optString("type")
+                        dataLength = headerJson.optInt("data_length", 0)
+                        AppLogger.log("DiagHandleClient: Parsed Header: type='$eventType', data_length=$dataLength")
+                        eventDataJson = headerJson // Default if no separate payload
+                    } catch (e: JSONException) {
+                        AppLogger.log("DiagHandleClient: Error parsing header JSON from $clientAddress ('$headerLine'): ${e.message}", AppLogger.LogLevel.ERROR)
+                        break // Cannot proceed if header is invalid JSON
+                    }
+
+                    if (dataLength > 0) {
+                        AppLogger.log("DiagHandleClient: Data payload expected from $clientAddress, length: $dataLength bytes. Attempting to read...")
+                        val dataPayloadBytes = ByteArray(dataLength)
+                        var totalPayloadBytesRead = 0
+
+                        try {
+                            while (totalPayloadBytesRead < dataLength) {
+                                val bytesReadThisTurn = inputStream.read(dataPayloadBytes, totalPayloadBytesRead, dataLength - totalPayloadBytesRead)
+                                if (bytesReadThisTurn == -1) {
+                                    AppLogger.log("DiagHandleClient: EOF reached prematurely while reading data payload. Expected $dataLength, got $totalPayloadBytesRead.", AppLogger.LogLevel.ERROR)
+                                    throw IOException("Unexpected EOF in data payload. Read $totalPayloadBytesRead/$dataLength bytes.")
+                                }
+                                totalPayloadBytesRead += bytesReadThisTurn
+                            }
+
+                            AppLogger.log("DiagHandleClient: Successfully read $totalPayloadBytesRead bytes for data payload.")
+                            AppLogger.log("DiagHandleClient: RECV DATA PAYLOAD HEX (${dataPayloadBytes.size} bytes): ${bytesToHexString(dataPayloadBytes, totalPayloadBytesRead)}")
+
+                            val dataPayloadString = String(dataPayloadBytes, 0, totalPayloadBytesRead, StandardCharsets.UTF_8)
+                            AppLogger.log("DiagHandleClient: RECV DATA PAYLOAD STRING: $dataPayloadString")
+
+                            try {
+                                eventDataJson = JSONObject(dataPayloadString) // This becomes the main event data
+                            } catch (e: JSONException) {
+                                 AppLogger.log("DiagHandleClient: Failed to parse data payload (from bytes) as JSON: '$dataPayloadString', error: ${e.message}", AppLogger.LogLevel.ERROR)
+                                 eventType = null // Mark event as unprocessable
+                            }
+                        } catch (e: java.net.SocketTimeoutException) {
+                             AppLogger.log("DiagHandleClient: Timeout reading data payload from $clientAddress after $totalPayloadBytesRead/$dataLength bytes.", AppLogger.LogLevel.ERROR)
+                             eventType = null // Mark event as unprocessable
+                        } catch (e: IOException) {
+                            AppLogger.log("DiagHandleClient: IOException during data payload reading for $clientAddress. Read $totalPayloadBytesRead/$dataLength bytes. Error: ${e.message}", AppLogger.LogLevel.ERROR)
+                            eventType = null // Mark event as unprocessable
+                        }
+                    }
+
+                    if (eventType != null && eventDataJson != null) {
                         when (eventType) {
                             "describe" -> {
                                 val infoResponseData = getTtsInfoDataJson()
                                 val infoDataBytes = infoResponseData.toString().toByteArray(StandardCharsets.UTF_8)
                                 val infoHeader = JSONObject().apply {
-                                    put("type", "info")
-                                    put("version", WYOMING_PROTOCOL_VERSION)
-                                    put("data_length", infoDataBytes.size)
+                                    put("type", "info"); put("version", WYOMING_PROTOCOL_VERSION); put("data_length", infoDataBytes.size)
                                 }
                                 writeInfoEvent(outputStream, infoHeader, infoDataBytes)
-                                AppLogger.log("Responded to 'describe' request from $clientAddress with 'info' event.")
+                                AppLogger.log("DiagHandleClient: Responded to 'describe' from $clientAddress.")
                             }
                             "synthesize" -> {
                                 val textToSynthesize = eventDataJson.optString("text", "")
                                 val voiceInfo = eventDataJson.optJSONObject("voice")
                                 val voiceName = voiceInfo?.optString("name")
-
-                                AppLogger.log("Processing Synthesize from $clientAddress: Text='${textToSynthesize}', Voice='${voiceName ?: "default"}'")
-
+                                AppLogger.log("DiagHandleClient: Processing Synthesize: Text='${textToSynthesize}', Voice='${voiceName ?: "default"}'")
                                 if (textToSynthesize.isNotEmpty()) {
                                     val utteranceId = UUID.randomUUID().toString()
                                     val deferred = CompletableDeferred<File?>()
                                     ttsUtteranceRequests[utteranceId] = deferred
                                     synthesizeTextToFile(textToSynthesize, utteranceId, voiceName)
                                     val resultFile = deferred.await()
-
-                                    if (resultFile != null) {
-                                        streamWavFile(clientSocket, resultFile)
-                                    } else {
-                                        AppLogger.log("TTS failed to produce a file for $clientAddress, utteranceId $utteranceId", AppLogger.LogLevel.ERROR)
-                                    }
-                                } else {
-                                    AppLogger.log("Synthesize request from $clientAddress resulted in empty text after processing payload.", AppLogger.LogLevel.WARN)
-                                }
+                                    if (resultFile != null) streamWavFile(clientSocket, resultFile)
+                                    else AppLogger.log("DiagHandleClient: TTS failed for $clientAddress, $utteranceId", AppLogger.LogLevel.ERROR)
+                                } else AppLogger.log("DiagHandleClient: Synthesize from $clientAddress with empty text.", AppLogger.LogLevel.WARN)
                             }
-                            else -> {
-                                if (!eventType.isNullOrEmpty()) {
-                                   AppLogger.log("Received unhandled event type '$eventType' from $clientAddress. Full header: $line", AppLogger.LogLevel.WARN)
-                                } else if (line.isNotBlank()){
-                                    AppLogger.log("Received non-empty, non-JSON, or empty-type line from $clientAddress: $line", AppLogger.LogLevel.WARN)
-                                }
-                            }
+                            else -> AppLogger.log("DiagHandleClient: Unhandled type '$eventType' from $clientAddress.", AppLogger.LogLevel.WARN)
                         }
-                    } catch (e: JSONException) {
-                        AppLogger.log("Error parsing header JSON from $clientAddress (line: '$line'): ${e.message}", AppLogger.LogLevel.ERROR)
-                    } catch (e: IOException) {
-                        AppLogger.log("IOException processing client data for $clientAddress (line '$line'): ${e.message}", AppLogger.LogLevel.ERROR)
-                        break
+                    } else {
+                         AppLogger.log("DiagHandleClient: Event processing skipped due to error or no type for $clientAddress.", AppLogger.LogLevel.WARN)
                     }
-                }
+                    // If we successfully processed one full event (header + optional data),
+                    // we can loop to read the next line/event from this client.
+                    // If HA sends one request then closes, readLine() (or rather, inputStream.read() for header)
+                    // in next iteration will get -1 (EOF) and break the loop.
+                } // End of while(isActive && clientSocket.isConnected)
+
             } catch (e: java.net.SocketTimeoutException) {
-                AppLogger.log("Client $clientAddress connection timed out due to inactivity (outer loop). Closing connection.", AppLogger.LogLevel.WARN)
+                AppLogger.log("DiagHandleClient: Client $clientAddress connection overall timeout. Closing.", AppLogger.LogLevel.WARN)
             } catch (e: IOException) {
-                if (e.message?.contains("Socket closed", ignoreCase = true) == true ||
-                    e.message?.contains("Connection reset", ignoreCase = true) == true ||
-                    e.message?.contains("Software caused connection abort", ignoreCase = true) == true ||
-                    e.message == null) {
-                    AppLogger.log("Client $clientAddress connection closed or stream ended.", AppLogger.LogLevel.INFO)
+                // Catch other IOExceptions from the outer operations or if the first header read fails completely
+                if (e.message?.contains("Socket closed", ignoreCase = true) == true || e.message?.contains("Connection reset", ignoreCase = true) == true) {
+                    AppLogger.log("DiagHandleClient: Client $clientAddress connection closed by peer or reset.", AppLogger.LogLevel.INFO)
                 } else {
-                    AppLogger.log("Outer client $clientAddress connection IO error: ${e.message}", AppLogger.LogLevel.ERROR)
+                    AppLogger.log("DiagHandleClient: Outer connection IO error for $clientAddress: ${e.message}", AppLogger.LogLevel.ERROR)
                 }
-            } finally {
+            } catch (e: Exception) {
+                AppLogger.log("DiagHandleClient: Unexpected error handling client $clientAddress: ${e.message}", AppLogger.LogLevel.ERROR, e)
+            }
+            finally {
                 try {
-                    if (!clientSocket.isClosed) {
-                        clientSocket.close()
-                    }
-                } catch (e: IOException) {
-                    AppLogger.log("Error closing client socket for $clientAddress in finally: ${e.message}", AppLogger.LogLevel.DEBUG)
-                }
-                AppLogger.log("Client $clientAddress disconnected and socket closed.")
+                    if (!clientSocket.isClosed) clientSocket.close()
+                } catch (e: IOException) { AppLogger.log("DiagHandleClient: Error closing socket for $clientAddress: ${e.message}", AppLogger.LogLevel.DEBUG) }
+                AppLogger.log("DiagHandleClient: Connection closed for $clientAddress.")
             }
         }
     }
