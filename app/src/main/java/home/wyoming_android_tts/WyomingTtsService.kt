@@ -338,7 +338,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
             val outputStream = socket.getOutputStream()
 
-// 1. Send audio-start event
+            // 1. Send audio-start event
             writeAudioStart(outputStream, wavInfo.sampleRate, wavInfo.bitsPerSample / 8, wavInfo.channels)
 
             // 2. Send audio-chunk events
@@ -347,7 +347,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             while (fileInputStream.read(buffer).also { bytesRead = it } != -1) {
                 writeAudioChunk(outputStream, buffer, bytesRead)
             }
-// Send final empty chunk to signal end of audio data within the stream
+            // Send final empty chunk to signal end of audio data within the stream
             writeAudioChunk(outputStream, ByteArray(0), 0)
 
             // 3. Send audio-stop event
@@ -359,7 +359,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             AppLogger.log("Error streaming WAV file: ${e.message}", AppLogger.LogLevel.ERROR)
         } finally {
             fileInputStream?.close()
-// Clean up the temporary file
+            // Clean up the temporary file
             if (wavFile.exists()) {
                 wavFile.delete()
                 AppLogger.log("Deleted temporary TTS file: ${wavFile.name}", AppLogger.LogLevel.DEBUG)
@@ -402,7 +402,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     }
 
     private suspend fun writeAudioChunk(stream: OutputStream, data: ByteArray, length: Int) {
-// For the final chunk, length will be 0
+        // For the final chunk, length will be 0
         if (length == 0) {
             val json = JSONObject().apply {
                 put("type", "audio-chunk")
@@ -410,7 +410,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             }.toString() + "\n"
             stream.write(json.toByteArray(StandardCharsets.UTF_8))
             stream.flush()
-            AppLogger.log("SENT: Final empty audio-chunk", AppLogger.LogLevel.DEBUG)
+            AppLogger.log("SENT: ${json.trim()}", AppLogger.LogLevel.DEBUG)
             return
         }
 
@@ -421,6 +421,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         stream.write(json.toByteArray(StandardCharsets.UTF_8))
         stream.write(data, 0, length)
         stream.flush()
+        AppLogger.log("SENT: ${json.trim()}", AppLogger.LogLevel.DEBUG)
     }
 
     private suspend fun writeAudioStop(stream: OutputStream) {
