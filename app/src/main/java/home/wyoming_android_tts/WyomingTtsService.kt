@@ -343,59 +343,48 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     }
 
     private suspend fun streamWavFile(socket: Socket, wavFile: File) {
-        // For this diagnostic test, we will send audio-start,
-        // ONE tiny audio-chunk of silence, then audio-stop.
-
-        // Use parameters consistent with what Android TTS typically produces
-        // and what we advertise in audio-start.
-        val diagnosticRate = 24000
-        val diagnosticWidthBytes = 2 // 16-bit
-        val diagnosticChannels = 1
-
-        // Create a tiny PCM payload: 2 bytes of silence for 16-bit mono (1 frame)
-        val tinyPcmPayload = ByteArray(2) { 0 } // {0, 0}
-
-        AppLogger.log("DIAGNOSTIC TEST: Sending audio-start, one tiny audio-chunk, then audio-stop.", AppLogger.LogLevel.WARN)
-
+        var fileInputStream: FileInputStream? = null
         try {
+            fileInputStream = FileInputStream(wavFile)
+            val wavInfo = parseWavHeader(fileInputStream)
+
+            if (wavInfo == null) {
+                AppLogger.log("Failed to parse WAV header for ${wavFile.name}", AppLogger.LogLevel.ERROR)
+                return
+            }
+            AppLogger.log("[TTS] Parsed WAV: ${wavInfo.sampleRate} Hz, ${wavInfo.bitsPerSample}-bit, ${wavInfo.channels} channels", AppLogger.LogLevel.INFO)
+
             val outputStream = socket.getOutputStream()
+            val audioWidth = wavInfo.bitsPerSample / 8 // Calculate width in bytes
 
             // 1. Send audio-start event
-            writeAudioStart(outputStream, diagnosticRate, diagnosticWidthBytes, diagnosticChannels)
-            AppLogger.log("DIAGNOSTIC: audio-start sent.", AppLogger.LogLevel.DEBUG)
+            writeAudioStart(outputStream, wavInfo.sampleRate, audioWidth, wavInfo.channels)
 
-            delay(3000L)
-
-            // 2. Send ONE tiny audio-chunk
-            AppLogger.log("DIAGNOSTIC: Sending one tiny audio chunk (2 bytes of silence).", AppLogger.LogLevel.DEBUG)
-            writeAudioChunk(
-                outputStream,
-                tinyPcmPayload,
-                tinyPcmPayload.size, // length = 2
-                diagnosticRate,
-                diagnosticWidthBytes,
-                diagnosticChannels
-            )
-            AppLogger.log("DIAGNOSTIC: Tiny audio-chunk sent.", AppLogger.LogLevel.DEBUG)
-
-            delay(6000L)
+            // 2. Send audio-chunk events
+            val buffer = ByteArray(4096) // Standard chunk size
+            var bytesRead: Int
+            while (fileInputStream.read(buffer).also { bytesRead = it } != -1) {
+                writeAudioChunk(outputStream, buffer, bytesRead, wavInfo.sampleRate, audioWidth, wavInfo.channels)
+            }
 
             // 3. Send audio-stop event
             writeAudioStop(outputStream)
-            AppLogger.log("DIAGNOSTIC: audio-stop sent.", AppLogger.LogLevel.DEBUG)
 
-            AppLogger.log("DIAGNOSTIC TEST: Finished sending minimal stream.", AppLogger.LogLevel.INFO)
+            AppLogger.log("Finished streaming ${wavFile.name} to client.")
 
         } catch (e: IOException) {
-            AppLogger.log("DIAGNOSTIC TEST: Error during minimal stream with tiny chunk: ${e.message}", AppLogger.LogLevel.ERROR)
+            AppLogger.log("Error streaming WAV file: ${e.message}", AppLogger.LogLevel.ERROR)
         } finally {
-            // The actual wavFile was not used for streaming in this diagnostic version,
-            // but we should still clean it up as it was created by the TTS engine.
+            try {
+                fileInputStream?.close()
+            } catch (e: IOException) {
+                AppLogger.log("Error closing file input stream: ${e.message}", AppLogger.LogLevel.DEBUG)
+            }
             if (wavFile.exists()) {
                 if (wavFile.delete()) {
-                    AppLogger.log("Deleted temporary TTS file (after diagnostic): ${wavFile.name}", AppLogger.LogLevel.DEBUG)
+                    AppLogger.log("Deleted temporary TTS file: ${wavFile.name}", AppLogger.LogLevel.DEBUG)
                 } else {
-                    AppLogger.log("Failed to delete temporary TTS file (after diagnostic): ${wavFile.name}", AppLogger.LogLevel.WARN)
+                    AppLogger.log("Failed to delete temporary TTS file: ${wavFile.name}", AppLogger.LogLevel.WARN)
                 }
             }
         }
