@@ -10,17 +10,20 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
-import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
+import java.io.InputStream
+import java.io.InputStreamReader
 import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.charset.StandardCharsets
 import java.util.*
 import kotlin.collections.set
 
@@ -30,7 +33,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val SERVER_PORT = 10300
-        private const val WYOMING_PROTOCOL_VERSION = "1.6.0" // Match version from user research
+        private const val WYOMING_PROTOCOL_VERSION = "1.6.0"
         private const val APP_VERSION = "1.0.0"
     }
     private var serverSocket: ServerSocket? = null
@@ -45,59 +48,87 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
     private suspend fun handleClient(clientSocket: Socket) {
         withContext(Dispatchers.IO) {
+            // Use both a BufferedReader for line-based JSON and the raw InputStream for data payloads
+            val inputStream = clientSocket.getInputStream()
+            val reader = BufferedReader(InputStreamReader(inputStream, StandardCharsets.UTF_8))
+            val outputStream = clientSocket.getOutputStream()
+
             try {
-                val outputStream = clientSocket.getOutputStream()
-                clientSocket.getInputStream().bufferedReader().useLines { lines ->
-                    lines.forEach { line ->
-                        AppLogger.log("RECV: $line")
-                        try {
-                            val jsonEvent = JSONObject(line)
-                            when (jsonEvent.optString("type")) {
-                                "describe" -> {
-                                    // Respond to 'describe' with a two-part 'info' event.
-                                    val dataJson = getTtsInfoDataJson()
-                                    val dataBytes = dataJson.toString().toByteArray()
+                while (isActive && clientSocket.isConnected) {
+                    val line = reader.readLine() ?: break // End of stream or client disconnected
+                    AppLogger.log("RECV LINE: $line")
+                    try {
+                        val headerJson = JSONObject(line)
+                        val eventType = headerJson.optString("type")
+                        val dataLength = headerJson.optInt("data_length", 0)
 
-                                    val headerJson = JSONObject().apply {
-                                        put("type", "info")
-                                        put("version", WYOMING_PROTOCOL_VERSION)
-                                        put("data_length", dataBytes.size)
-                                    }
-                                    
-                                    writeInfoEvent(outputStream, headerJson, dataBytes)
-                                    AppLogger.log("Responded to 'describe' request with two-part 'info' event.")
-                                }
-                                "synthesize" -> {
-                                    val textToSynthesize = jsonEvent.optString("text", "")
-                                    if (textToSynthesize.isNotEmpty()) {
-                                        val utteranceId = UUID.randomUUID().toString()
-                                        val deferred = CompletableDeferred<File?>()
-                                        ttsUtteranceRequests[utteranceId] = deferred
+                        var dataJson = headerJson // Assume data is in header if no data_length
 
-                                        // The voice name can be passed from the 'synthesize' event
-                                        val voiceName = jsonEvent.optJSONObject("voice")?.optString("name")
-                                        synthesizeTextToFile(textToSynthesize, utteranceId, voiceName)
-                                        
-                                        val resultFile = deferred.await()
-
-                                        if (resultFile != null) {
-                                            streamWavFile(clientSocket, resultFile)
-                                        } else {
-                                            AppLogger.log("TTS failed to produce a file for utteranceId $utteranceId", AppLogger.LogLevel.ERROR)
-                                        }
-                                    } else {
-                                        AppLogger.log("Synthesize request with empty text.", AppLogger.LogLevel.WARN)
-                                    }
-                                }
-                                else -> AppLogger.log("Received unknown event type: ${jsonEvent.optString("type")}", AppLogger.LogLevel.WARN)
+                        if (dataLength > 0) {
+                            // Read the data payload
+                            val dataBytes = ByteArray(dataLength)
+                            var bytesRead = 0
+                            while (bytesRead < dataLength) {
+                                val count = inputStream.read(dataBytes, bytesRead, dataLength - bytesRead)
+                                if (count == -1) throw IOException("Unexpected end of stream while reading data payload.")
+                                bytesRead += count
                             }
-                        } catch (e: JSONException) {
-                            AppLogger.log("Error parsing JSON from client: $line", AppLogger.LogLevel.ERROR)
+                            val dataPayloadString = String(dataBytes, StandardCharsets.UTF_8)
+                            AppLogger.log("RECV DATA PAYLOAD: $dataPayloadString")
+                            dataJson = JSONObject(dataPayloadString) // This is the actual event data
                         }
+
+
+                        when (eventType) {
+                            "describe" -> {
+                                val infoResponse = getTtsInfoDataJson() // This creates the DATA part
+                                val infoDataBytes = infoResponse.toString().toByteArray(StandardCharsets.UTF_8)
+                                val infoHeader = JSONObject().apply {
+                                    put("type", "info")
+                                    put("version", WYOMING_PROTOCOL_VERSION)
+                                    put("data_length", infoDataBytes.size)
+                                }
+                                writeInfoEvent(outputStream, infoHeader, infoDataBytes)
+                                AppLogger.log("Responded to 'describe' request with two-part 'info' event.")
+                            }
+                            "synthesize" -> {
+                                // Text and voice details should be in dataJson now
+                                val textToSynthesize = dataJson.optString("text", "")
+                                val voiceInfo = dataJson.optJSONObject("voice")
+                                val voiceName = voiceInfo?.optString("name")
+                                
+                                AppLogger.log("Processing Synthesize: Text='${textToSynthesize}', Voice='${voiceName ?: "default"}'")
+
+                                if (textToSynthesize.isNotEmpty()) {
+                                    val utteranceId = UUID.randomUUID().toString()
+                                    val deferred = CompletableDeferred<File?>()
+                                    ttsUtteranceRequests[utteranceId] = deferred
+
+                                    synthesizeTextToFile(textToSynthesize, utteranceId, voiceName)
+                                    val resultFile = deferred.await()
+
+                                    if (resultFile != null) {
+                                        streamWavFile(clientSocket, resultFile) // Pass clientSocket for its outputStream
+                                    } else {
+                                        AppLogger.log("TTS failed to produce a file for utteranceId $utteranceId", AppLogger.LogLevel.ERROR)
+                                    }
+                                } else {
+                                    AppLogger.log("Synthesize request with empty text after processing.", AppLogger.LogLevel.WARN)
+                                }
+                            }
+                            else -> AppLogger.log("Received unknown event type: $eventType", AppLogger.LogLevel.WARN)
+                        }
+                    } catch (e: JSONException) {
+                        AppLogger.log("Error parsing JSON from client (line: '$line'): ${e.message}", AppLogger.LogLevel.ERROR)
                     }
                 }
             } catch (e: IOException) {
-                AppLogger.log("Client connection error: ${e.message}", AppLogger.LogLevel.ERROR)
+                // This can happen if the client disconnects abruptly, or readLine returns null and loop breaks
+                if (e.message?.contains("Socket closed") == true || e.message?.contains("Connection reset") == true || e.message == null) {
+                    AppLogger.log("Client connection closed or stream ended.", AppLogger.LogLevel.INFO)
+                } else {
+                    AppLogger.log("Client connection IO error: ${e.message}", AppLogger.LogLevel.ERROR)
+                }
             } finally {
                 try {
                     clientSocket.close()
@@ -106,7 +137,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             }
         }
     }
-
+    
     private fun getTtsInfoDataJson(): JSONObject {
         // This function now creates the large "data" part of the info event
         val ttsImplInfo = JSONObject()
@@ -125,7 +156,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                 val availableVoices = tts?.voices?.toList() ?: emptyList()
                 for (voice in availableVoices) {
                     val voiceInfo = JSONObject()
-                    voiceInfo.put("name", voice.name)
+                    voiceInfo.put("name", voice.name) // This name should be used as 'id' by client
                     voiceInfo.put("description", "Android System Voice: ${voice.name}")
                     voiceInfo.put("attribution", JSONObject().apply { 
                         put("name", "Android OS")
@@ -162,7 +193,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
     private suspend fun writeInfoEvent(stream: OutputStream, header: JSONObject, data: ByteArray) {
         val headerString = header.toString() + "\n"
-        stream.write(headerString.toByteArray())
+        stream.write(headerString.toByteArray(StandardCharsets.UTF_8))
         stream.write(data)
         stream.flush()
         AppLogger.log("SENT INFO HEADER: ${header.toString(2)}", AppLogger.LogLevel.DEBUG)
@@ -238,7 +269,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                     if (result == TextToSpeech.SUCCESS) {
                          AppLogger.log("[TTS] Set voice to: $voiceName", AppLogger.LogLevel.DEBUG)
                     } else {
-                         AppLogger.log("[TTS] Failed to set voice to: $voiceName", AppLogger.LogLevel.WARN)
+                         AppLogger.log("[TTS] Failed to set voice to: $voiceName (Error code: $result)", AppLogger.LogLevel.WARN)
                     }
                 }
             } else {
@@ -257,7 +288,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             AppLogger.log("[TTS] synthesizeToFile call successful for $utteranceId. Waiting for onDone/onError callback.", AppLogger.LogLevel.INFO)
         }
     }
-
+    
     private suspend fun streamWavFile(socket: Socket, wavFile: File) {
         var fileInputStream: FileInputStream? = null
         try {
@@ -272,7 +303,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
             val outputStream = socket.getOutputStream()
 
-            // 1. Send audio-start event
+// 1. Send audio-start event
             writeAudioStart(outputStream, wavInfo.sampleRate, wavInfo.bitsPerSample / 8, wavInfo.channels)
 
             // 2. Send audio-chunk events
@@ -330,7 +361,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             put("width", width)
             put("channels", channels)
         }.toString() + "\n"
-        stream.write(json.toByteArray())
+        stream.write(json.toByteArray(StandardCharsets.UTF_8))
         stream.flush()
         AppLogger.log("SENT: ${json.trim()}", AppLogger.LogLevel.DEBUG)
     }
@@ -342,7 +373,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                 put("type", "audio-chunk")
                 put("payload_length", 0)
             }.toString() + "\n"
-            stream.write(json.toByteArray())
+            stream.write(json.toByteArray(StandardCharsets.UTF_8))
             stream.flush()
             AppLogger.log("SENT: Final empty audio-chunk", AppLogger.LogLevel.DEBUG)
             return
@@ -352,8 +383,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             put("type", "audio-chunk")
             put("payload_length", length)
         }.toString() + "\n"
-
-        stream.write(json.toByteArray())
+        stream.write(json.toByteArray(StandardCharsets.UTF_8))
         stream.write(data, 0, length)
         stream.flush()
     }
@@ -362,7 +392,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         val json = JSONObject().apply {
             put("type", "audio-stop")
         }.toString() + "\n"
-        stream.write(json.toByteArray())
+        stream.write(json.toByteArray(StandardCharsets.UTF_8))
         stream.flush()
         AppLogger.log("SENT: ${json.trim()}", AppLogger.LogLevel.DEBUG)
     }
