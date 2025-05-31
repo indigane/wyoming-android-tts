@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.os.IBinder
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.speech.tts.Voice
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 import org.json.JSONArray
@@ -24,6 +23,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
 import kotlin.collections.set
+
 
 class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
@@ -53,10 +53,10 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                             val jsonEvent = JSONObject(line)
                             when (jsonEvent.optString("type")) {
                                 "describe" -> {
-                                    // NEW: Handle the describe event from Home Assistant
-                                    val describeResponse = getTtsDescribeJson()
-                                    writeJsonEvent(outputStream, describeResponse)
-                                    AppLogger.log("Responded to 'describe' request.")
+                                    // Respond to 'describe' with an 'info' event.
+                                    val infoResponse = getTtsInfoJson()
+                                    writeJsonEvent(outputStream, infoResponse)
+                                    AppLogger.log("Responded to 'describe' request with 'info' event.")
                                 }
                                 "synthesize" -> {
                                     val textToSynthesize = jsonEvent.optString("text", "")
@@ -65,7 +65,10 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                                         val deferred = CompletableDeferred<File?>()
                                         ttsUtteranceRequests[utteranceId] = deferred
 
-                                        synthesizeTextToFile(textToSynthesize, utteranceId)
+                                        // The voice name can be passed from the 'synthesize' event
+                                        val voiceName = jsonEvent.optJSONObject("voice")?.optString("name")
+                                        synthesizeTextToFile(textToSynthesize, utteranceId, voiceName)
+                                        
                                         val resultFile = deferred.await()
 
                                         if (resultFile != null) {
@@ -95,22 +98,30 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun getTtsDescribeJson(): JSONObject {
-        val ttsServiceInfo = JSONObject()
-        ttsServiceInfo.put("type", "tts")
+    private fun getTtsInfoJson(): JSONObject {
+        val ttsImplInfo = JSONObject()
+        ttsImplInfo.put("name", "android_tts") // Name for our specific TTS implementation
 
         val voicesArray = JSONArray()
         if (ttsInitialized && tts != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try {
-                for (voice in tts!!.voices) {
+                // Defensive copy to avoid ConcurrentModificationException if voices change
+                val availableVoices = tts?.voices?.toList() ?: emptyList()
+                for (voice in availableVoices) {
                     val voiceInfo = JSONObject()
-                    voiceInfo.put("id", voice.name) // Use the unique voice name as ID
+                    // Use the unique voice name as the ID, which HA will send back in synthesize requests
+                    voiceInfo.put("id", voice.name) 
                     voiceInfo.put("name", voice.name)
                     voiceInfo.put("language", voice.locale.toLanguageTag()) // e.g., "en-US"
+                    
+                    // Android Voice API doesn't provide speakers, so we add a "default" one like wyoming-piper.
+                    val speakersArray = JSONArray()
+                    speakersArray.put("default")
+                    voiceInfo.put("speakers", speakersArray)
 
+                    // Optional: Add other attributes if available, though most are not in Android's Voice API
                     val attributes = JSONObject()
-                    attributes.put("gender", "UNKNOWN") // Android Voice API doesn't provide gender
-                    attributes.put("piper_voice", false)
+                    attributes.put("gender", "UNKNOWN")
                     voiceInfo.put("attributes", attributes)
                     
                     voicesArray.put(voiceInfo)
@@ -119,25 +130,30 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                 AppLogger.log("Failed to get TTS voices: ${e.message}", AppLogger.LogLevel.ERROR)
             }
         }
-        ttsServiceInfo.put("voices", voicesArray)
+        ttsImplInfo.put("voices", voicesArray)
 
-        val servicesArray = JSONArray()
-        servicesArray.put(ttsServiceInfo)
+        val ttsArray = JSONArray()
+        ttsArray.put(ttsImplInfo)
 
-        val describeResponse = JSONObject()
-        describeResponse.put("type", "describe")
-        describeResponse.put("services", servicesArray)
+        // The top-level 'info' event object
+        val infoResponse = JSONObject()
+        infoResponse.put("type", "info")
+        infoResponse.put("tts", ttsArray)
+        // Explicitly state we don't support other services
+        infoResponse.put("stt", JSONArray())
+        infoResponse.put("wake", JSONArray())
+        infoResponse.put("handle", JSONArray())
 
-        return describeResponse
+        return infoResponse
     }
 
     private suspend fun writeJsonEvent(stream: OutputStream, json: JSONObject) {
         val jsonString = json.toString() + "\n"
         stream.write(jsonString.toByteArray())
         stream.flush()
-        AppLogger.log("SENT: $jsonString", AppLogger.LogLevel.DEBUG)
+        AppLogger.log("SENT: ${json.toString(2)}", AppLogger.LogLevel.DEBUG) // Log formatted JSON
     }
-    
+
     override fun onCreate() {
         super.onCreate()
         AppLogger.log("Service creating...")
@@ -167,12 +183,12 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                 override fun onError(utteranceId: String?, errorCode: Int) {
                     AppLogger.log("[TTS] onError: Speech synthesis failed for $utteranceId, errorCode: $errorCode", AppLogger.LogLevel.ERROR)
                     val deferred = ttsUtteranceRequests.remove(utteranceId)
-                    deferred?.complete(null) // Signal failure by completing with null
+                    deferred?.complete(null)
                 }
 
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
-                    onError(utteranceId, -1) // Forward to the modern onError
+                    onError(utteranceId, -1)
                 }
             })
         } catch (e: Exception) {
@@ -182,12 +198,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val result = tts?.setLanguage(Locale.US)
-            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                AppLogger.log("[TTS] Language (US English) is not supported or missing data.", AppLogger.LogLevel.WARN)
-            } else {
-                AppLogger.log("[TTS] Engine initialized successfully.", AppLogger.LogLevel.INFO)
-            }
+            AppLogger.log("[TTS] Engine initialized successfully.", AppLogger.LogLevel.INFO)
             ttsInitialized = true
         } else {
             AppLogger.log("[TTS] Engine initialization failed. Status: $status", AppLogger.LogLevel.ERROR)
@@ -195,12 +206,22 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun synthesizeTextToFile(text: String, utteranceId: String) {
+    private fun synthesizeTextToFile(text: String, utteranceId: String, voiceName: String?) {
         if (!ttsInitialized || tts == null) {
             AppLogger.log("[TTS] Not initialized, cannot synthesize.", AppLogger.LogLevel.ERROR)
-            val deferred = ttsUtteranceRequests.remove(utteranceId)
-            deferred?.complete(null) // Immediately signal failure
+            ttsUtteranceRequests.remove(utteranceId)?.complete(null)
             return
+        }
+
+        // Select the voice requested by Home Assistant
+        if (voiceName != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            val requestedVoice = tts?.voices?.firstOrNull { it.name == voiceName }
+            if (requestedVoice != null) {
+                tts?.voice = requestedVoice
+                AppLogger.log("[TTS] Set voice to: $voiceName", AppLogger.LogLevel.DEBUG)
+            } else {
+                AppLogger.log("[TTS] Requested voice not found: $voiceName. Using default.", AppLogger.LogLevel.WARN)
+            }
         }
 
         val outputFile = File(cacheDir, "$utteranceId.wav")
@@ -209,8 +230,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
         if (result != TextToSpeech.SUCCESS) {
             AppLogger.log("[TTS] synthesizeToFile call failed immediately for $utteranceId. Result code: $result", AppLogger.LogLevel.ERROR)
-            val deferred = ttsUtteranceRequests.remove(utteranceId)
-            deferred?.complete(null) // Signal failure
+            ttsUtteranceRequests.remove(utteranceId)?.complete(null)
         } else {
             AppLogger.log("[TTS] synthesizeToFile call successful for $utteranceId. Waiting for onDone/onError callback.", AppLogger.LogLevel.INFO)
         }
@@ -229,7 +249,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             AppLogger.log("[TTS] Parsed WAV: ${wavInfo.sampleRate} Hz, ${wavInfo.bitsPerSample}-bit, ${wavInfo.channels} channels", AppLogger.LogLevel.INFO)
 
             val outputStream = socket.getOutputStream()
-            
+
             // 1. Send audio-start event
             writeAudioStart(outputStream, wavInfo.sampleRate, wavInfo.bitsPerSample / 8, wavInfo.channels)
 
@@ -239,19 +259,19 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             while (fileInputStream.read(buffer).also { bytesRead = it } != -1) {
                 writeAudioChunk(outputStream, buffer, bytesRead)
             }
-            // Send final empty chunk to signal end of audio data within the stream
+// Send final empty chunk to signal end of audio data within the stream
             writeAudioChunk(outputStream, ByteArray(0), 0)
 
             // 3. Send audio-stop event
             writeAudioStop(outputStream)
-            
+
             AppLogger.log("Finished streaming ${wavFile.name}", AppLogger.LogLevel.INFO)
 
         } catch (e: IOException) {
             AppLogger.log("Error streaming WAV file: ${e.message}", AppLogger.LogLevel.ERROR)
         } finally {
             fileInputStream?.close()
-            // Clean up the temporary file
+// Clean up the temporary file
             if (wavFile.exists()) {
                 wavFile.delete()
                 AppLogger.log("Deleted temporary TTS file: ${wavFile.name}", AppLogger.LogLevel.DEBUG)
@@ -294,7 +314,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     }
 
     private suspend fun writeAudioChunk(stream: OutputStream, data: ByteArray, length: Int) {
-        // For the final chunk, length will be 0
+// For the final chunk, length will be 0
         if (length == 0) {
             val json = JSONObject().apply {
                 put("type", "audio-chunk")
