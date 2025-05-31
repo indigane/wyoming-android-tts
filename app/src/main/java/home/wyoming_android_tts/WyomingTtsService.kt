@@ -366,15 +366,11 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             while (fileInputStream.read(buffer).also { bytesRead = it } != -1) {
                 writeAudioChunk(outputStream, buffer, bytesRead, wavInfo.sampleRate, audioWidth, wavInfo.channels)
             }
-            // Send final empty chunk to signal end of audio data within the stream
-            writeAudioChunk(outputStream, ByteArray(0), 0, wavInfo.sampleRate, audioWidth, wavInfo.channels)
 
-            delay(2000L)
             // 3. Send audio-stop event
             writeAudioStop(outputStream)
 
             AppLogger.log("Finished streaming ${wavFile.name} to client.")
-            delay(2000L)
 
         } catch (e: IOException) {
             AppLogger.log("Error streaming WAV file: ${e.message}", AppLogger.LogLevel.ERROR)
@@ -392,7 +388,6 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                 }
             }
         }
-        delay(2000L)
     }
 
     private fun parseWavHeader(stream: FileInputStream): WavInfo? {
@@ -453,12 +448,8 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         }
         stream.flush()
 
-        if (length == 0) {
-            AppLogger.log("SENT: Final empty audio-chunk with header: ${jsonHeaderString.trim()}", AppLogger.LogLevel.DEBUG)
-        } else {
-            // Optionally log the header for non-empty chunks too, can be verbose
-            AppLogger.log("SENT: Audio-chunk header: ${jsonHeaderString.trim()} with $length bytes payload", AppLogger.LogLevel.DEBUG)
-        }
+        // Optionally log the header for chunks, can be verbose
+        AppLogger.log("SENT: Audio-chunk header: ${jsonHeaderString.trim()} with $length bytes payload", AppLogger.LogLevel.DEBUG)
     }
 
     private suspend fun writeAudioStop(stream: OutputStream) {
