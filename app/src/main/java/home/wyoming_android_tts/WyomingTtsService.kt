@@ -361,14 +361,14 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             writeAudioStart(outputStream, wavInfo.sampleRate, audioWidth, wavInfo.channels)
 
             // 2. Send audio-chunk events
-            val buffer = ByteArray(4096) // Standard chunk size
-            var bytesRead: Int
-            while (fileInputStream.read(buffer).also { bytesRead = it } != -1) {
+            // val buffer = ByteArray(4096) // Standard chunk size
+            // var bytesRead: Int
+            // while (fileInputStream.read(buffer).also { bytesRead = it } != -1) {
 
-                delay(1000L)
+            //     delay(1000L)
 
-                writeAudioChunk(outputStream, buffer, bytesRead, wavInfo.sampleRate, audioWidth, wavInfo.channels)
-            }
+            //     writeAudioChunk(outputStream, buffer, bytesRead, wavInfo.sampleRate, audioWidth, wavInfo.channels)
+            // }
 
             delay(10000L)
 
