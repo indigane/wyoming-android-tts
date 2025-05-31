@@ -48,32 +48,29 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
     private fun readLineFromStream(inputStream: InputStream, clientAddress: String): String? {
         val lineBuffer = java.io.ByteArrayOutputStream()
-        var byteRead: Int
+        var byteRead: Int = 0 // Initialize byteRead here
         var bytesInLine = 0
-        // AppLogger.log("readLineFromStream: Reading line from $clientAddress") // Verbose, keep commented unless needed
 
-        // socket.soTimeout will handle overall read timeouts for inputStream.read()
         while (bytesInLine < 8192) { // Safety limit for a single line (max header size)
             byteRead = inputStream.read()
-            if (byteRead == -1) { // EOF
-                if (bytesInLine == 0) return null // Clean EOF before any data for this line
+            if (byteRead == -1) {
+                if (bytesInLine == 0) return null
                 AppLogger.log("readLineFromStream: EOF on $clientAddress after $bytesInLine bytes without newline. Processing as line.", AppLogger.LogLevel.WARN)
                 break
             }
             bytesInLine++
             lineBuffer.write(byteRead)
             if (byteRead == '\n'.code) {
-                break // Newline found, line complete
+                break
             }
         }
+        // Check if the loop exited due to line being too long AND didn't end with a newline
         if (bytesInLine >= 8192 && byteRead != '\n'.code) {
             throw IOException("Line too long from $clientAddress (>$bytesInLine bytes without newline)")
         }
         if (lineBuffer.size() == 0) return null
 
-        // The raw bytes for the header line are in lineBuffer.toByteArray()
-        // We don't need to log them in hex for normal operation.
-        return String(lineBuffer.toByteArray(), StandardCharsets.UTF_8).trimEnd() // Trim trailing newline
+        return String(lineBuffer.toByteArray(), StandardCharsets.UTF_8).trimEnd()
     }
 
     private suspend fun handleClient(clientSocket: Socket) {
