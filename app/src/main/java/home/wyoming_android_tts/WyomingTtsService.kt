@@ -46,7 +46,6 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     private val ttsUtteranceRequests = mutableMapOf<String, CompletableDeferred<File?>>()
     private data class WavInfo(val sampleRate: Int, val channels: Int, val bitsPerSample: Int)
 
-
     private suspend fun handleClient(clientSocket: Socket) {
         withContext(Dispatchers.IO) {
             // Use both a BufferedReader for line-based JSON and the raw InputStream for data payloads
@@ -55,32 +54,51 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             val outputStream = clientSocket.getOutputStream()
 
             try {
+                // Loop to read multiple events from the same client if the connection is kept open
                 while (isActive && clientSocket.isConnected) {
                     val line = reader.readLine() ?: break // End of stream or client disconnected
                     AppLogger.log("RECV LINE: $line")
                     try {
                         val headerJson = JSONObject(line)
                         val eventType = headerJson.optString("type")
+                        // data_length in the header indicates a subsequent data payload
                         val dataLength = headerJson.optInt("data_length", 0)
 
-                        var dataJson = headerJson // Assume data is in header if no data_length
+                        var eventDataJson = headerJson // Assume data is in header if no separate data payload initially
 
                         if (dataLength > 0) {
-                            // Read the data payload
-                            val dataBytes = ByteArray(dataLength)
-                            var bytesRead = 0
-                            while (bytesRead < dataLength) {
-                                val count = inputStream.read(dataBytes, bytesRead, dataLength - bytesRead)
-                                if (count == -1) throw IOException("Unexpected end of stream while reading data payload.")
-                                bytesRead += count
+                            AppLogger.log("Data payload expected, length: $dataLength bytes.")
+                            val dataChars = CharArray(dataLength) // Use CharArray as JSON is text
+                            var totalCharsRead = 0
+                            var charsReadThisTurn: Int
+
+                            // Loop to ensure all dataLength characters are read, as reader.read might return less
+                            while (totalCharsRead < dataLength) {
+                                charsReadThisTurn = reader.read(dataChars, totalCharsRead, dataLength - totalCharsRead)
+                                if (charsReadThisTurn == -1) { // End of stream reached prematurely
+                                    throw IOException("Unexpected end of stream while reading data payload. Expected $dataLength, got $totalCharsRead")
+                                }
+                                totalCharsRead += charsReadThisTurn
                             }
-                            val dataPayloadString = String(dataBytes, StandardCharsets.UTF_8)
-                            AppLogger.log("RECV DATA PAYLOAD: $dataPayloadString")
-                            dataJson = JSONObject(dataPayloadString) // This is the actual event data
+
+                            val dataPayloadString = String(dataChars, 0, totalCharsRead)
+                            AppLogger.log("RECV DATA PAYLOAD ($totalCharsRead chars): $dataPayloadString")
+                            try {
+                                eventDataJson = JSONObject(dataPayloadString) // This is the actual event data
+                            } catch (e: JSONException) {
+                                 AppLogger.log("Failed to parse data payload as JSON: '$dataPayloadString', error: ${e.message}", AppLogger.LogLevel.ERROR)
+                                 // If payload is critical and unparseable, we might not be able to process the event.
+                                 // Depending on protocol, might send an error back or just log and continue/break.
+                                 // For now, let's try to skip to the next line/event.
+                                 continue
+                            }
                         }
 
+                        // Now use eventDataJson for processing the actual content of the event
                         when (eventType) {
                             "describe" -> {
+                                // For 'describe', the main info is usually not in a separate data payload,
+                                // but our response generation (getTtsInfoDataJson) creates a data payload to be sent.
                                 val infoResponseData = getTtsInfoDataJson()
                                 val infoDataBytes = infoResponseData.toString().toByteArray(StandardCharsets.UTF_8)
                                 val infoHeader = JSONObject().apply {
@@ -92,9 +110,9 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                                 AppLogger.log("Responded to 'describe' request with two-part 'info' event.")
                             }
                             "synthesize" -> {
-                                // Text and voice details should be in dataJson now
-                                val textToSynthesize = dataJson.optString("text", "")
-                                val voiceInfo = dataJson.optJSONObject("voice")
+                                // Text and voice details should now be correctly in eventDataJson
+                                val textToSynthesize = eventDataJson.optString("text", "")
+                                val voiceInfo = eventDataJson.optJSONObject("voice")
                                 val voiceName = voiceInfo?.optString("name")
 
                                 AppLogger.log("Processing Synthesize: Text='${textToSynthesize}', Voice='${voiceName ?: "default"}'")
@@ -108,31 +126,47 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                                     val resultFile = deferred.await()
 
                                     if (resultFile != null) {
-                                        streamWavFile(clientSocket, resultFile)
+                                        streamWavFile(clientSocket, resultFile) // Pass original clientSocket
                                     } else {
                                         AppLogger.log("TTS failed to produce a file for utteranceId $utteranceId", AppLogger.LogLevel.ERROR)
+                                        // TODO: Consider sending an error event back to client if protocol supports
                                     }
                                 } else {
-                                    AppLogger.log("Synthesize request with empty text after processing.", AppLogger.LogLevel.WARN)
+                                    AppLogger.log("Synthesize request resulted in empty text after processing payload.", AppLogger.LogLevel.WARN)
                                 }
                             }
-                            else -> AppLogger.log("Received unknown event type: $eventType", AppLogger.LogLevel.WARN)
+                            // Handle other event types if necessary
+                            else -> {
+                                if (!eventType.isNullOrEmpty()) { // Avoid logging for blank lines if any
+                                   AppLogger.log("Received unhandled event type: '$eventType'. Full header: $line", AppLogger.LogLevel.WARN)
+                                }
+                            }
                         }
                     } catch (e: JSONException) {
-                        AppLogger.log("Error parsing JSON from client (line: '$line'): ${e.message}", AppLogger.LogLevel.ERROR)
+                        AppLogger.log("Error parsing header JSON from client (line: '$line'): ${e.message}", AppLogger.LogLevel.ERROR)
+                    } catch (e: IOException) { // Catch IOExceptions during data payload reading or readLine itself
+                        AppLogger.log("IOException processing client data for line '$line': ${e.message}", AppLogger.LogLevel.ERROR)
+                        break // Break the while loop on significant IO error for this client
                     }
-                }
+                } // End of while loop reading lines
             } catch (e: IOException) {
-                // This can happen if the client disconnects abruptly, or readLine returns null and loop breaks
-                if (e.message?.contains("Socket closed") == true || e.message?.contains("Connection reset") == true || e.message == null) {
+                // This catches errors like the socket being closed abruptly by the client while reader.readLine() is blocking
+                if (e.message?.contains("Socket closed", ignoreCase = true) == true ||
+                    e.message?.contains("Connection reset", ignoreCase = true) == true ||
+                    e.message?.contains("Software caused connection abort", ignoreCase = true) == true ||
+                    e.message == null) { // readLine() returns null on EOF, which can cause this loop to exit then close.
                     AppLogger.log("Client connection closed or stream ended.", AppLogger.LogLevel.INFO)
                 } else {
-                    AppLogger.log("Client connection IO error: ${e.message}", AppLogger.LogLevel.ERROR)
+                    AppLogger.log("Outer client connection IO error: ${e.message}", AppLogger.LogLevel.ERROR)
                 }
             } finally {
                 try {
-                    clientSocket.close()
-                } catch (e: IOException) { /* Ignore */ }
+                    if (!clientSocket.isClosed) {
+                        clientSocket.close()
+                    }
+                } catch (e: IOException) {
+                    AppLogger.log("Error closing client socket in finally: ${e.message}", AppLogger.LogLevel.DEBUG)
+                }
                 AppLogger.log("Client disconnected and socket closed: ${clientSocket.inetAddress?.hostAddress}")
             }
         }
