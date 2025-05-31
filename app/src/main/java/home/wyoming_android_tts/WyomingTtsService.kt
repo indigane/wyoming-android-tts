@@ -328,7 +328,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         var fileInputStream: FileInputStream? = null
         try {
             fileInputStream = FileInputStream(wavFile)
-            val wavInfo = parseWavHeader(fileInputStream)
+            val wavInfo = parseWavHeader(fileInputStream) // Contains rate, channels, bitsPerSample
 
             if (wavInfo == null) {
                 AppLogger.log("Failed to parse WAV header for ${wavFile.name}", AppLogger.LogLevel.ERROR)
@@ -337,18 +337,21 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             AppLogger.log("[TTS] Parsed WAV: ${wavInfo.sampleRate} Hz, ${wavInfo.bitsPerSample}-bit, ${wavInfo.channels} channels", AppLogger.LogLevel.INFO)
 
             val outputStream = socket.getOutputStream()
+            val audioWidth = wavInfo.bitsPerSample / 8 // Calculate width in bytes
 
             // 1. Send audio-start event
-            writeAudioStart(outputStream, wavInfo.sampleRate, wavInfo.bitsPerSample / 8, wavInfo.channels)
+            writeAudioStart(outputStream, wavInfo.sampleRate, audioWidth, wavInfo.channels)
 
             // 2. Send audio-chunk events
-            val buffer = ByteArray(4096)
+            val buffer = ByteArray(4096) // Standard chunk size
             var bytesRead: Int
             while (fileInputStream.read(buffer).also { bytesRead = it } != -1) {
-                writeAudioChunk(outputStream, buffer, bytesRead)
+                // Pass wavInfo to writeAudioChunk
+                writeAudioChunk(outputStream, buffer, bytesRead, wavInfo.sampleRate, audioWidth, wavInfo.channels)
             }
             // Send final empty chunk to signal end of audio data within the stream
-            writeAudioChunk(outputStream, ByteArray(0), 0)
+            // Pass wavInfo (or last known audio parameters) for the final empty chunk header
+            writeAudioChunk(outputStream, ByteArray(0), 0, wavInfo.sampleRate, audioWidth, wavInfo.channels)
 
             // 3. Send audio-stop event
             writeAudioStop(outputStream)
@@ -359,7 +362,6 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             AppLogger.log("Error streaming WAV file: ${e.message}", AppLogger.LogLevel.ERROR)
         } finally {
             fileInputStream?.close()
-            // Clean up the temporary file
             if (wavFile.exists()) {
                 wavFile.delete()
                 AppLogger.log("Deleted temporary TTS file: ${wavFile.name}", AppLogger.LogLevel.DEBUG)
@@ -401,27 +403,36 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         AppLogger.log("SENT: ${json.trim()}", AppLogger.LogLevel.DEBUG)
     }
 
-    private suspend fun writeAudioChunk(stream: OutputStream, data: ByteArray, length: Int) {
-        // For the final chunk, length will be 0
-        if (length == 0) {
-            val json = JSONObject().apply {
-                put("type", "audio-chunk")
-                put("payload_length", 0)
-            }.toString() + "\n"
-            stream.write(json.toByteArray(StandardCharsets.UTF_8))
-            stream.flush()
-            AppLogger.log("SENT: ${json.trim()}", AppLogger.LogLevel.DEBUG)
-            return
-        }
-
-        val json = JSONObject().apply {
+    private suspend fun writeAudioChunk(
+        stream: OutputStream,
+        data: ByteArray,
+        length: Int,
+        rate: Int,
+        width: Int,
+        channels: Int
+    ) {
+        val jsonHeaderObject = JSONObject().apply {
             put("type", "audio-chunk")
+            // Add rate, width, and channels to every chunk header
+            put("rate", rate)
+            put("width", width)
+            put("channels", channels)
             put("payload_length", length)
-        }.toString() + "\n"
-        stream.write(json.toByteArray(StandardCharsets.UTF_8))
-        stream.write(data, 0, length)
+        }
+        val jsonHeaderString = jsonHeaderObject.toString() + "\n"
+
+        stream.write(jsonHeaderString.toByteArray(StandardCharsets.UTF_8))
+        if (length > 0) {
+            stream.write(data, 0, length)
+        }
         stream.flush()
-        AppLogger.log("SENT: ${json.trim()}", AppLogger.LogLevel.DEBUG)
+
+        if (length == 0) {
+            AppLogger.log("SENT: Final empty audio-chunk with header: ${jsonHeaderObject.trim()}", AppLogger.LogLevel.DEBUG)
+        } else {
+            // Optionally log the header for non-empty chunks too, can be verbose
+            AppLogger.log("SENT: Audio-chunk header: ${jsonHeaderObject.trim()} with $length bytes payload", AppLogger.LogLevel.DEBUG)
+        }
     }
 
     private suspend fun writeAudioStop(stream: OutputStream) {
