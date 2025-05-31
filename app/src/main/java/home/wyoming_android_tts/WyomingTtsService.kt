@@ -52,61 +52,63 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             AppLogger.log("Handling client: $clientAddress")
 
             try {
-                // Set a read timeout on the socket (e.g., 30 seconds)
-                // If no data is received from the client within this period, readLine() will throw SocketTimeoutException.
-                clientSocket.soTimeout = 30000 // 30 seconds
+                clientSocket.soTimeout = 30000 // 30 seconds read timeout
+                clientSocket.tcpNoDelay = true
 
+                // We need the raw InputStream for byte-counted payloads,
+                // and a BufferedReader for line-based JSON headers.
                 val inputStream = clientSocket.getInputStream()
                 val reader = BufferedReader(InputStreamReader(inputStream, StandardCharsets.UTF_8))
                 val outputStream = clientSocket.getOutputStream()
 
-                // Loop to read multiple events from the same client
                 while (isActive && clientSocket.isConnected && !clientSocket.isClosed) {
                     val line = try {
-                        reader.readLine() // This will throw SocketTimeoutException if timeout occurs
+                        reader.readLine()
                     } catch (e: java.net.SocketTimeoutException) {
-                        AppLogger.log("Client $clientAddress timed out (idle for 30s). Closing connection.", AppLogger.LogLevel.WARN)
-                        break // Exit the loop to close the connection
+                        AppLogger.log("Client $clientAddress timed out waiting for line. Closing connection.", AppLogger.LogLevel.WARN)
+                        break
                     }
 
                     if (line == null) {
                         AppLogger.log("Client $clientAddress closed connection (readLine returned null).", AppLogger.LogLevel.INFO)
-                        break // End of stream, client closed connection
+                        break
                     }
 
                     AppLogger.log("RECV LINE from $clientAddress: $line")
                     try {
                         val headerJson = JSONObject(line)
                         val eventType = headerJson.optString("type")
-                        // data_length in the header indicates a subsequent data payload
                         val dataLength = headerJson.optInt("data_length", 0)
-
-                        var eventDataJson = headerJson // Assume data is in header if no separate data payload initially
+                        var eventDataJson = headerJson // Default if no separate data payload
 
                         if (dataLength > 0) {
                             AppLogger.log("Data payload expected from $clientAddress, length: $dataLength bytes.")
-                            val dataChars = CharArray(dataLength)
-                            var totalCharsRead = 0
-                            var charsReadThisTurn: Int
+                            val dataBytes = ByteArray(dataLength)
+                            var totalBytesRead = 0
+                            var bytesReadThisTurn: Int
 
-                            // Loop to ensure all dataLength characters are read, as reader.read might return less
-                            while (totalCharsRead < dataLength) {
-                                charsReadThisTurn = reader.read(dataChars, totalCharsRead, dataLength - totalCharsRead)
-                                if (charsReadThisTurn == -1) {
-                                    throw IOException("Unexpected end of stream while reading data payload. Expected $dataLength, got $totalCharsRead")
+                            // Loop to ensure all dataLength bytes are read directly from the InputStream
+                            while (totalBytesRead < dataLength) {
+                                // Read directly from the raw inputStream, NOT the BufferedReader,
+                                // as the BufferedReader might have its own buffering independent of readLine()
+                                // and we need precise byte counts here.
+                                bytesReadThisTurn = inputStream.read(dataBytes, totalBytesRead, dataLength - totalBytesRead)
+                                if (bytesReadThisTurn == -1) {
+                                    throw IOException("Unexpected end of stream while reading data payload bytes from $clientAddress. Expected $dataLength, got $totalBytesRead")
                                 }
-                                totalCharsRead += charsReadThisTurn
+                                totalBytesRead += bytesReadThisTurn
                             }
 
-                            val dataPayloadString = String(dataChars, 0, totalCharsRead)
-                            AppLogger.log("RECV DATA PAYLOAD from $clientAddress ($totalCharsRead chars): $dataPayloadString")
+                            // Log a snippet of the raw bytes for debugging
+                            val byteSnippetForLog = dataBytes.take(Math.min(totalBytesRead, 64)).joinToString("") { "%02x".format(it) }
+                            AppLogger.log("RECV DATA PAYLOAD BYTES ($totalBytesRead bytes, snippet hex): $byteSnippetForLog")
+
+                            val dataPayloadString = String(dataBytes, 0, totalBytesRead, StandardCharsets.UTF_8)
+                            AppLogger.log("RECV DATA PAYLOAD STRING: $dataPayloadString")
                             try {
                                 eventDataJson = JSONObject(dataPayloadString)
                             } catch (e: JSONException) {
-                                AppLogger.log("Failed to parse data payload from $clientAddress as JSON: '$dataPayloadString', error: ${e.message}", AppLogger.LogLevel.ERROR)
-                                // If payload is critical and unparseable, we might not be able to process the event.
-                                // Depending on protocol, might send an error back or just log and continue/break.
-                                // For now, let's try to skip to the next line/event.
+                                 AppLogger.log("Failed to parse data payload (from bytes) as JSON: '$dataPayloadString', error: ${e.message}", AppLogger.LogLevel.ERROR)
                                  continue
                             }
                         }
@@ -114,8 +116,6 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                         // Now use eventDataJson for processing the actual content of the event
                         when (eventType) {
                             "describe" -> {
-                                // For 'describe', the main info is usually not in a separate data payload,
-                                // but our response generation (getTtsInfoDataJson) creates a data payload to be sent.
                                 val infoResponseData = getTtsInfoDataJson()
                                 val infoDataBytes = infoResponseData.toString().toByteArray(StandardCharsets.UTF_8)
                                 val infoHeader = JSONObject().apply {
@@ -137,24 +137,22 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                                     val utteranceId = UUID.randomUUID().toString()
                                     val deferred = CompletableDeferred<File?>()
                                     ttsUtteranceRequests[utteranceId] = deferred
-
                                     synthesizeTextToFile(textToSynthesize, utteranceId, voiceName)
                                     val resultFile = deferred.await()
 
                                     if (resultFile != null) {
-                                        streamWavFile(clientSocket, resultFile) // Pass clientSocket
+                                        streamWavFile(clientSocket, resultFile)
                                     } else {
                                         AppLogger.log("TTS failed to produce a file for $clientAddress, utteranceId $utteranceId", AppLogger.LogLevel.ERROR)
-                                        // TODO: Consider sending an error event back to client if protocol supports
                                     }
                                 } else {
-                                    AppLogger.log("Synthesize request from $clientAddress resulted in empty text.", AppLogger.LogLevel.WARN)
+                                    AppLogger.log("Synthesize request from $clientAddress resulted in empty text after processing payload.", AppLogger.LogLevel.WARN)
                                 }
                             }
                             else -> {
                                 if (!eventType.isNullOrEmpty()) {
                                    AppLogger.log("Received unhandled event type '$eventType' from $clientAddress. Full header: $line", AppLogger.LogLevel.WARN)
-                                } else if (line.isNotBlank()) { // Client sent something that wasn't JSON or was empty type
+                                } else if (line.isNotBlank()){
                                     AppLogger.log("Received non-empty, non-JSON, or empty-type line from $clientAddress: $line", AppLogger.LogLevel.WARN)
                                 }
                             }
@@ -163,10 +161,10 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                         AppLogger.log("Error parsing header JSON from $clientAddress (line: '$line'): ${e.message}", AppLogger.LogLevel.ERROR)
                     } catch (e: IOException) {
                         AppLogger.log("IOException processing client data for $clientAddress (line '$line'): ${e.message}", AppLogger.LogLevel.ERROR)
-                        break // Break the while loop on significant IO error for this client
+                        break
                     }
-                } // End of while loop reading lines
-            } catch (e: java.net.SocketTimeoutException) { // Catch timeout specifically for the outer readLine attempts
+                }
+            } catch (e: java.net.SocketTimeoutException) {
                 AppLogger.log("Client $clientAddress connection timed out due to inactivity (outer loop). Closing connection.", AppLogger.LogLevel.WARN)
             } catch (e: IOException) {
                 if (e.message?.contains("Socket closed", ignoreCase = true) == true ||
