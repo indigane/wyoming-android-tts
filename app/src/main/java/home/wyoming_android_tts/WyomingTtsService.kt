@@ -10,6 +10,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
+import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -78,11 +79,10 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                             dataJson = JSONObject(dataPayloadString) // This is the actual event data
                         }
 
-
                         when (eventType) {
                             "describe" -> {
-                                val infoResponse = getTtsInfoDataJson() // This creates the DATA part
-                                val infoDataBytes = infoResponse.toString().toByteArray(StandardCharsets.UTF_8)
+                                val infoResponseData = getTtsInfoDataJson()
+                                val infoDataBytes = infoResponseData.toString().toByteArray(StandardCharsets.UTF_8)
                                 val infoHeader = JSONObject().apply {
                                     put("type", "info")
                                     put("version", WYOMING_PROTOCOL_VERSION)
@@ -108,7 +108,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                                     val resultFile = deferred.await()
 
                                     if (resultFile != null) {
-                                        streamWavFile(clientSocket, resultFile) // Pass clientSocket for its outputStream
+                                        streamWavFile(clientSocket, resultFile)
                                     } else {
                                         AppLogger.log("TTS failed to produce a file for utteranceId $utteranceId", AppLogger.LogLevel.ERROR)
                                     }
@@ -142,7 +142,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         // This function now creates the large "data" part of the info event
         val ttsImplInfo = JSONObject()
         ttsImplInfo.put("name", "android_tts")
-        ttsImplInfo.put("description", "A fast, local TTS service using the Android OS engine")
+        ttsImplInfo.put("description", "A local TTS service using the Android OS engine")
         ttsImplInfo.put("attribution", JSONObject().apply {
             put("name", "indigane/wyoming-android-tts")
             put("url", "https://github.com/indigane/wyoming-android-tts")
@@ -163,9 +163,10 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                         put("url", "https://source.android.com/")
                     })
                     voiceInfo.put("installed", true)
-                    voiceInfo.put("version", JSONObject.NULL) // Android API doesn't provide voice version
+                    // For JSONObject.NULL, the compiler needs to know its type.
+                    voiceInfo.put("version", JSONObject.NULL as Any?) // Android API doesn't provide voice version
                     voiceInfo.put("languages", JSONArray().put(voice.locale.toLanguageTag()))
-                    voiceInfo.put("speakers", JSONObject.NULL) // Android API doesn't provide speaker info
+                    voiceInfo.put("speakers", JSONObject.NULL as Any?) // Android API doesn't provide speaker info
                     
                     voicesArray.put(voiceInfo)
                 }
