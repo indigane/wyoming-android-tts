@@ -30,8 +30,9 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val SERVER_PORT = 10300
+        private const val WYOMING_PROTOCOL_VERSION = "1.6.0" // Match version from user research
+        private const val APP_VERSION = "1.0.0"
     }
-
     private var serverSocket: ServerSocket? = null
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
@@ -53,10 +54,18 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                             val jsonEvent = JSONObject(line)
                             when (jsonEvent.optString("type")) {
                                 "describe" -> {
-                                    // Respond to 'describe' with an 'info' event.
-                                    val infoResponse = getTtsInfoJson()
-                                    writeJsonEvent(outputStream, infoResponse)
-                                    AppLogger.log("Responded to 'describe' request with 'info' event.")
+                                    // Respond to 'describe' with a two-part 'info' event.
+                                    val dataJson = getTtsInfoDataJson()
+                                    val dataBytes = dataJson.toString().toByteArray()
+
+                                    val headerJson = JSONObject().apply {
+                                        put("type", "info")
+                                        put("version", WYOMING_PROTOCOL_VERSION)
+                                        put("data_length", dataBytes.size)
+                                    }
+                                    
+                                    writeInfoEvent(outputStream, headerJson, dataBytes)
+                                    AppLogger.log("Responded to 'describe' request with two-part 'info' event.")
                                 }
                                 "synthesize" -> {
                                     val textToSynthesize = jsonEvent.optString("text", "")
@@ -98,31 +107,34 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun getTtsInfoJson(): JSONObject {
+    private fun getTtsInfoDataJson(): JSONObject {
+        // This function now creates the large "data" part of the info event
         val ttsImplInfo = JSONObject()
-        ttsImplInfo.put("name", "android_tts") // Name for our specific TTS implementation
+        ttsImplInfo.put("name", "android_tts")
+        ttsImplInfo.put("description", "A fast, local TTS service using the Android OS engine")
+        ttsImplInfo.put("attribution", JSONObject().apply {
+            put("name", "indigane/wyoming-android-tts")
+            put("url", "https://github.com/indigane/wyoming-android-tts")
+        })
+        ttsImplInfo.put("installed", true)
+        ttsImplInfo.put("version", APP_VERSION)
 
         val voicesArray = JSONArray()
         if (ttsInitialized && tts != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try {
-                // Defensive copy to avoid ConcurrentModificationException if voices change
                 val availableVoices = tts?.voices?.toList() ?: emptyList()
                 for (voice in availableVoices) {
                     val voiceInfo = JSONObject()
-                    // Use the unique voice name as the ID, which HA will send back in synthesize requests
-                    voiceInfo.put("id", voice.name) 
                     voiceInfo.put("name", voice.name)
-                    voiceInfo.put("language", voice.locale.toLanguageTag()) // e.g., "en-US"
-                    
-                    // Android Voice API doesn't provide speakers, so we add a "default" one like wyoming-piper.
-                    val speakersArray = JSONArray()
-                    speakersArray.put("default")
-                    voiceInfo.put("speakers", speakersArray)
-
-                    // Optional: Add other attributes if available, though most are not in Android's Voice API
-                    val attributes = JSONObject()
-                    attributes.put("gender", "UNKNOWN")
-                    voiceInfo.put("attributes", attributes)
+                    voiceInfo.put("description", "Android System Voice: ${voice.name}")
+                    voiceInfo.put("attribution", JSONObject().apply { 
+                        put("name", "Android OS")
+                        put("url", "https://source.android.com/")
+                    })
+                    voiceInfo.put("installed", true)
+                    voiceInfo.put("version", JSONObject.NULL) // Android API doesn't provide voice version
+                    voiceInfo.put("languages", JSONArray().put(voice.locale.toLanguageTag()))
+                    voiceInfo.put("speakers", JSONObject.NULL) // Android API doesn't provide speaker info
                     
                     voicesArray.put(voiceInfo)
                 }
@@ -135,23 +147,26 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         val ttsArray = JSONArray()
         ttsArray.put(ttsImplInfo)
 
-        // The top-level 'info' event object
-        val infoResponse = JSONObject()
-        infoResponse.put("type", "info")
-        infoResponse.put("tts", ttsArray)
-        // Explicitly state we don't support other services
-        infoResponse.put("stt", JSONArray())
-        infoResponse.put("wake", JSONArray())
-        infoResponse.put("handle", JSONArray())
-
-        return infoResponse
+        // The top-level data object
+        val dataObject = JSONObject()
+        dataObject.put("tts", ttsArray)
+        dataObject.put("asr", JSONArray())
+        dataObject.put("handle", JSONArray())
+        dataObject.put("intent", JSONArray())
+        dataObject.put("wake", JSONArray())
+        dataObject.put("mic", JSONArray())
+        dataObject.put("snd", JSONArray())
+        
+        return dataObject
     }
 
-    private suspend fun writeJsonEvent(stream: OutputStream, json: JSONObject) {
-        val jsonString = json.toString() + "\n"
-        stream.write(jsonString.toByteArray())
+    private suspend fun writeInfoEvent(stream: OutputStream, header: JSONObject, data: ByteArray) {
+        val headerString = header.toString() + "\n"
+        stream.write(headerString.toByteArray())
+        stream.write(data)
         stream.flush()
-        AppLogger.log("SENT: ${json.toString(2)}", AppLogger.LogLevel.DEBUG) // Log formatted JSON
+        AppLogger.log("SENT INFO HEADER: ${header.toString(2)}", AppLogger.LogLevel.DEBUG)
+        AppLogger.log("SENT INFO DATA (${data.size} bytes)", AppLogger.LogLevel.DEBUG)
     }
 
     override fun onCreate() {
@@ -214,13 +229,20 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         }
 
         // Select the voice requested by Home Assistant
-        if (voiceName != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        if (!voiceName.isNullOrEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             val requestedVoice = tts?.voices?.firstOrNull { it.name == voiceName }
             if (requestedVoice != null) {
-                tts?.voice = requestedVoice
-                AppLogger.log("[TTS] Set voice to: $voiceName", AppLogger.LogLevel.DEBUG)
+                // Setting voice is a heavy operation, only do it if it's different
+                if (tts?.voice?.name != requestedVoice.name) {
+                    val result = tts?.setVoice(requestedVoice)
+                    if (result == TextToSpeech.SUCCESS) {
+                         AppLogger.log("[TTS] Set voice to: $voiceName", AppLogger.LogLevel.DEBUG)
+                    } else {
+                         AppLogger.log("[TTS] Failed to set voice to: $voiceName", AppLogger.LogLevel.WARN)
+                    }
+                }
             } else {
-                AppLogger.log("[TTS] Requested voice not found: $voiceName. Using default.", AppLogger.LogLevel.WARN)
+                AppLogger.log("[TTS] Requested voice not found: $voiceName. Using current default.", AppLogger.LogLevel.WARN)
             }
         }
 
