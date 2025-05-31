@@ -364,6 +364,9 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             val buffer = ByteArray(4096) // Standard chunk size
             var bytesRead: Int
             while (fileInputStream.read(buffer).also { bytesRead = it } != -1) {
+
+                delay(1000L)
+
                 writeAudioChunk(outputStream, buffer, bytesRead, wavInfo.sampleRate, audioWidth, wavInfo.channels)
             }
 
