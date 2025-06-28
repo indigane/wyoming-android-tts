@@ -1,0 +1,67 @@
+name: Android Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tagName:
+        description: 'Tag for the release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build-and-release:
+    name: Build and Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 --decode > $HOME/release.p12
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build with Gradle (Release APK)
+        env:
+          # KEYSTORE_PATH will be set in the run command using shell expansion
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ vars.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          export KEYSTORE_PATH="$HOME/release.p12"
+          ./gradlew assembleRelease
+
+      - name: Clean up tag name
+        id: clean_tag
+        run: |
+          # Use shell parameter expansion to remove a leading 'v' if it exists
+          CLEAN_TAG=${{ github.event.inputs.tagName }}
+          echo "tag_name=${CLEAN_TAG#v}" >> $GITHUB_OUTPUT
+
+      - name: Rename Release Files
+        run: |
+          mv app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/${{ github.event.repository.name }}-${{ steps.clean_tag.outputs.tag_name }}.apk"
+
+      - name: Create GitHub Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ github.event.inputs.tagName }}
+          name: Release ${{ github.event.inputs.tagName }}
+          draft: true
+          files: |
+            app/build/outputs/apk/release/*.apk
