@@ -45,7 +45,7 @@ Contributions are welcome! If you have an idea for a new feature, a bug fix, or 
 
 ## 🤖 An Experiment in AI-Assisted Development
 
-As of writing this project is fully LLM created including the code, this Readme and the app icon.
+As of writing this project is fully LLM created—including the code, this Readme and the app icon.
 
 ## 📜 License
 
