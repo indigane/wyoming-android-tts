@@ -3,4 +3,12 @@
     <string name="notification_title">Wyoming TTS Service</string>
     <string name="notification_message">Service is running to provide TTS.</string>
     <string name="notification_message_listening">Listening on port %1$d for TTS requests.</string>
+
+    <!-- Preference Titles and Summaries -->
+    <string name="pref_category_network_title">Network Settings</string>
+    <string name="pref_service_name_title">Service Name</string>
+    <string name="pref_service_name_summary">The name your TTS service will be advertised as on the network (mDNS).</string>
+    <string name="pref_service_port_title">Service Port</string>
+    <string name="pref_service_port_summary">The network port the TTS service will listen on.</string>
+    <string name="action_settings">Settings</string>
 </resources>

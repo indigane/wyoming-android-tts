@@ -9,6 +9,7 @@ import android.os.IBinder
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
+import androidx.preference.PreferenceManager
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONException
@@ -33,11 +34,14 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
     companion object {
         private const val NOTIFICATION_ID = 1
-        private const val SERVER_PORT = 10300
+        // Default values, will be overridden by preferences
+        private const val DEFAULT_SERVER_PORT = 10300
+        private const val DEFAULT_SERVICE_NAME = "Wyoming Android TTS"
         private const val WYOMING_PROTOCOL_VERSION = "1.6.0"
         private const val APP_VERSION = "1.0.0"
     }
     private var serverSocket: ServerSocket? = null
+    private var currentPort: Int = DEFAULT_SERVER_PORT
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private var serverListeningJob: Job? = null
@@ -45,6 +49,8 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     private var ttsInitialized = false
     private val ttsUtteranceRequests = mutableMapOf<String, CompletableDeferred<File?>>()
     private data class WavInfo(val sampleRate: Int, val channels: Int, val bitsPerSample: Int)
+
+    private lateinit var wyomingDiscoveryManager: WyomingDiscoveryManager
 
     private fun readLineFromStream(inputStream: InputStream, clientAddress: String): String? {
         val lineBuffer = java.io.ByteArrayOutputStream()
@@ -228,10 +234,9 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                         put("url", "https://source.android.com/")
                     })
                     voiceInfo.put("installed", true)
-                    // For JSONObject.NULL, the compiler needs to know its type.
-                    voiceInfo.put("version", JSONObject.NULL as Any?) // Android API doesn't provide voice version
+                    voiceInfo.put("version", JSONObject.NULL) // Android API doesn't provide voice version
                     voiceInfo.put("languages", JSONArray().put(voice.locale.toLanguageTag()))
-                    voiceInfo.put("speakers", JSONObject.NULL as Any?) // Android API doesn't provide speaker info
+                    voiceInfo.put("speakers", JSONObject.NULL) // Android API doesn't provide speaker info
 
                     voicesArray.put(voiceInfo)
                 }
@@ -269,6 +274,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     override fun onCreate() {
         super.onCreate()
         AppLogger.log("Service creating...")
+        wyomingDiscoveryManager = WyomingDiscoveryManager(applicationContext)
         setupTextToSpeech()
     }
 
@@ -503,9 +509,11 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         AppLogger.log("Service starting...")
+        loadPreferences() // Load preferences before starting server and notification
+
         val notification: Notification = NotificationCompat.Builder(this, WyomingTtsApp.CHANNEL_ID)
             .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_message_listening, SERVER_PORT))
+            .setContentText(getString(R.string.notification_message_listening, currentPort))
             .setSmallIcon(R.mipmap.ic_launcher)
             .build()
         startForeground(NOTIFICATION_ID, notification)
@@ -513,15 +521,27 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
         return START_STICKY
     }
 
+    private fun loadPreferences() {
+        val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+        currentPort = sharedPreferences.getString("service_port", DEFAULT_SERVER_PORT.toString())?.toIntOrNull() ?: DEFAULT_SERVER_PORT
+        // Service name will be read directly in startServer when registering
+        AppLogger.log("Loaded preferences: Port=$currentPort")
+    }
+
     private fun startServer() {
         if (serverListeningJob?.isActive == true) {
-            AppLogger.log("Server already running on port $SERVER_PORT")
+            AppLogger.log("Server already running on port $currentPort")
             return
         }
         serverListeningJob = serviceScope.launch {
             try {
-                serverSocket = ServerSocket(SERVER_PORT)
-                AppLogger.log("Server started, listening on port $SERVER_PORT")
+                serverSocket = ServerSocket(currentPort)
+                AppLogger.log("Server started, listening on port $currentPort")
+
+                val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+                val serviceName = sharedPreferences.getString("service_name", DEFAULT_SERVICE_NAME) ?: DEFAULT_SERVICE_NAME
+                wyomingDiscoveryManager.registerService(serviceName, currentPort)
+
                 while (isActive) {
                     try {
                         val clientSocket = serverSocket!!.accept()
@@ -534,7 +554,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
             } catch (e: IOException) {
-                AppLogger.log("Could not start server on port $SERVER_PORT: ${e.message}", AppLogger.LogLevel.ERROR)
+                AppLogger.log("Could not start server on port $currentPort: ${e.message}", AppLogger.LogLevel.ERROR)
             } finally {
                 AppLogger.log("Server listening loop ended.", AppLogger.LogLevel.WARN)
                 serverSocket?.close()
@@ -544,11 +564,15 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
 
     private fun stopServer() {
         AppLogger.log("Stopping server...")
+        wyomingDiscoveryManager.unregisterService()
         serverListeningJob?.cancel()
-        serviceJob.cancel()
+        // serviceJob.cancel() // Cancelling serviceJob here might be too early if unregisterService relies on it or if other coroutines use it.
+                           // NsdManager operations are asynchronous. Consider if serviceJob needs to be active for callbacks.
+                           // For now, assume NsdManager handles its own threading for unregistration.
         try {
             serverSocket?.close()
             serverSocket = null
+            AppLogger.log("Server socket closed.")
         } catch (e: IOException) {
             AppLogger.log("Error closing server socket: ${e.message}", AppLogger.LogLevel.ERROR)
         }
@@ -557,7 +581,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         super.onDestroy()
         AppLogger.log("Service destroying...")
-        stopServer()
+        stopServer() // This now calls unregisterService()
         if (tts != null) {
             AppLogger.log("[TTS] Shutting down TextToSpeech engine.", AppLogger.LogLevel.INFO)
             tts?.stop()
@@ -565,6 +589,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
             tts = null
             ttsInitialized = false
         }
+        serviceJob.cancel() // Cancel the main service job as one of the last steps
         AppLogger.log("Service destroyed.")
     }
 
