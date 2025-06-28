@@ -1,7 +1,7 @@
 package home.wyoming_android_tts
 
 import android.os.Bundle
-import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.PreferenceFragmentCompat // Already present, ensure no other preference import is conflicting
 
 class SettingsFragment : PreferenceFragmentCompat() {
 

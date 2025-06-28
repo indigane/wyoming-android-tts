@@ -555,7 +555,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
             } catch (e: IOException) {
-                AppLogger.log("Could not start server on port $SERVER_PORT: ${e.message}", AppLogger.LogLevel.ERROR)
+                AppLogger.log("Could not start server on port $currentPort: ${e.message}", AppLogger.LogLevel.ERROR)
             } finally {
                 AppLogger.log("Server listening loop ended.", AppLogger.LogLevel.WARN)
                 serverSocket?.close()
