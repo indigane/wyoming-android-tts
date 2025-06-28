@@ -1,0 +1,38 @@
+
+.gradle/8.14/checksums/checksums.lock
+.gradle/8.14/checksums/md5-checksums.bin
+.gradle/8.14/checksums/sha1-checksums.bin
+.gradle/8.14/executionHistory/executionHistory.bin
+.gradle/8.14/executionHistory/executionHistory.lock
+.gradle/8.14/fileChanges/last-build.bin
+.gradle/8.14/fileHashes/fileHashes.bin
+.gradle/8.14/fileHashes/fileHashes.lock
+.gradle/8.14/gc.properties
+.gradle/buildOutputCleanup/buildOutputCleanup.lock
+.gradle/buildOutputCleanup/cache.properties
+.gradle/buildOutputCleanup/outputFiles.bin
+.gradle/vcs-1/gc.properties
+build/reports/problems/problems-report.html
+gradlew.bat
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+.DS_Store
+
+# Gradle
+.gradle/
+build/
+local.properties
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Android Studio specific
+/.idea/caches/
+/.idea/libraries/
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
