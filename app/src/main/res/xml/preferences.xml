@@ -3,19 +3,19 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <PreferenceCategory
-        title="@string/pref_category_network_title">
+        android:title="@string/pref_category_network_title">
 
         <EditTextPreference
-            key="service_name"
-            title="@string/pref_service_name_title"
-            summary="@string/pref_service_name_summary"
-            defaultValue="Wyoming Android TTS" />
+            android:key="service_name"
+            android:title="@string/pref_service_name_title"
+            android:summary="@string/pref_service_name_summary"
+            android:defaultValue="Wyoming Android TTS" />
 
         <EditTextPreference
-            key="service_port"
-            title="@string/pref_service_port_title"
-            summary="@string/pref_service_port_summary"
-            defaultValue="10300"
+            android:key="service_port"
+            android:title="@string/pref_service_port_title"
+            android:summary="@string/pref_service_port_summary"
+            android:defaultValue="10300"
             android:inputType="number" />
 
     </PreferenceCategory>
