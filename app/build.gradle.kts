@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "home.wyoming_android_tts"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "home.wyoming_android_tts"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 

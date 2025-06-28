@@ -14,7 +14,7 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        tools:targetApi="34"
+        tools:targetApi="35"
     >
         <service
             android:name=".WyomingTtsService"
