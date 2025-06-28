@@ -1,38 +1,220 @@
-
-.gradle/8.14/checksums/checksums.lock
-.gradle/8.14/checksums/md5-checksums.bin
-.gradle/8.14/checksums/sha1-checksums.bin
-.gradle/8.14/executionHistory/executionHistory.bin
-.gradle/8.14/executionHistory/executionHistory.lock
-.gradle/8.14/fileChanges/last-build.bin
-.gradle/8.14/fileHashes/fileHashes.bin
-.gradle/8.14/fileHashes/fileHashes.lock
-.gradle/8.14/gc.properties
-.gradle/buildOutputCleanup/buildOutputCleanup.lock
-.gradle/buildOutputCleanup/cache.properties
-.gradle/buildOutputCleanup/outputFiles.bin
-.gradle/vcs-1/gc.properties
-build/reports/problems/problems-report.html
-gradlew.bat
-
+# -----------------------------------------------
 # Android Studio / IntelliJ
+# -----------------------------------------------
+
+# Ignore IntelliJ project files
 *.iml
+*.ipr
+*.iws
 .idea/
-.DS_Store
 
-# Gradle
-.gradle/
-build/
-local.properties
-app/build/
+# Keystore files (if you keep them in the repo directory by accident)
+*.jks
+*.keystore
+
+# Android Studio captures (screenshots, etc.)
 captures/
-.externalNativeBuild/
-.cxx/
 
-# Android Studio specific
-/.idea/caches/
-/.idea/libraries/
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
+# User-specific Gradle settings
+.gradle/
+
+# Local configuration file (SDK path, etc.)
+local.properties
+
+# Log files
+*.log
+
+# Android Studio Patch/diff files
+*.patch
+
+# -----------------------------------------------
+# Gradle
+# -----------------------------------------------
+
+# Gradle wrapper
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Built application files
+**/build/
+*/build/
+!.gradle/
+.build/
+
+# If using Gradle output caching
+.gradle/
+
+# -----------------------------------------------
+# Android
+# -----------------------------------------------
+
+# Built APKs and app bundles
+*.apk
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated native files (NDK)
+*.so
+*.o
+*.d
+
+# Generated ProGuard mapping files
+mapping.txt
+mapping/*.txt
+
+# Generated reports from lint/coverage etc.
+lint-results.xml
+report.html
+report.txt
+
+# Generated play store metadata
+metadata/
+
+# Gradle dependency caching
+/gradle/
+/build/
+!gradle-wrapper.jar
+
+# Signing files (avoid committing private keys)
+/*.keystore
+/*.jks
+
+# Android Studio build folders
+/app/build/
+/${MODULE}/build/
+
+# -----------------------------------------------
+# Kotlin
+# -----------------------------------------------
+
+# Kotlin incremental compilation
+*.kotlin_module
+*.kotlin_record
+
+# -----------------------------------------------
+# Eclipse (if you ever import/maintain an Eclipse version)
+# -----------------------------------------------
+
+.metadata
+.classpath
+.project
+.settings/
+bin/
+
+# -----------------------------------------------
+# Mac (OSX)
+# -----------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon
+
+# Thumbnails
+._*
+
+# macOS Finder attributes
+.Spotlight-V100
+.Trashes
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.hotfiles.btree
+.volumeIcon.icns
+
+# macOS folder attributes
+.com.apple.timemachine.donotpresent
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+
+# -----------------------------------------------
+# Windows
+# -----------------------------------------------
+
+Thumbs.db
+ehthumbs.db
+
+# Recycle Bin used on file shares
+$RECYCLE.BIN/
+
+# Windows Installer files
+*.cab
+*.msi
+*.msm
+*.msp
+
+# Windows shortcuts
+*.lnk
+
+# -----------------------------------------------
+# Linux
+# -----------------------------------------------
+
+*~
+
+# Temporary files
+*.swp
+*.swo
+
+# KDE directory preferences
+.directory
+
+# -----------------------------------------------
+# Miscellaneous
+# -----------------------------------------------
+
+# IDE/editor backup and temp files
+*~
+*.tmp
+*.bak
+*.orig
+
+# Editor directories and files
+.vscode/
+*.code-workspace
+
+# NDK-related
+obj/
+obj/local/
+
+# Signing credentials (don't commit these; keep off-repo or in secure vault)
+*.pepk
+
+# Firebase crashlytics build meta-info
+crashlytics.properties
+firebase_crashlytics_build_id.json
+
+# IntelliJ scratch files
+.idea/scratches
+
+# Android Studio profiler snapshots
+*.android-profile
+
+# Android Studio UI test recordings
+*.uiauto
+
+# Jetpack Compose preview
+*/build/compose-scrap-build-cache*
+
+# Generated protobuf files (if using Protobuf)
+**/*.pb.jav a
+
+# Google Services (e.g. google-services.json)
+# If you store this in a secure location and don't want to commit.
+# Otherwise, remove this line.
+google-services.json
