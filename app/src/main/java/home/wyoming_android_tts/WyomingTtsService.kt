@@ -212,7 +212,7 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
     private fun getTtsInfoDataJson(): JSONObject {
         // This function now creates the large "data" part of the info event
         val ttsImplInfo = JSONObject()
-        ttsImplInfo.put("name", "android_tts")
+        ttsImplInfo.put("name", "Wyoming Android TTS")
         ttsImplInfo.put("description", "A local TTS service using the Android OS engine")
         ttsImplInfo.put("attribution", JSONObject().apply {
             put("name", "indigane/wyoming-android-tts")
