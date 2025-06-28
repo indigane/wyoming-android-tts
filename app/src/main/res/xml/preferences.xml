@@ -9,15 +9,13 @@
             key="service_name"
             title="@string/pref_service_name_title"
             summary="@string/pref_service_name_summary"
-            defaultValue="Wyoming Android TTS"
-            app:useSimpleSummaryProvider="true" />
+            defaultValue="Wyoming Android TTS" />
 
         <EditTextPreference
             key="service_port"
             title="@string/pref_service_port_title"
             summary="@string/pref_service_port_summary"
             defaultValue="10300"
-            app:useSimpleSummaryProvider="true"
             android:inputType="number" />
 
     </PreferenceCategory>
