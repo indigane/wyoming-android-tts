@@ -234,10 +234,9 @@ class WyomingTtsService : Service(), TextToSpeech.OnInitListener {
                         put("url", "https://source.android.com/")
                     })
                     voiceInfo.put("installed", true)
-                    // For JSONObject.NULL, the compiler needs to know its type.
-                    voiceInfo.put("version", JSONObject.NULL as Any?) // Android API doesn't provide voice version
+                    voiceInfo.put("version", JSONObject.NULL) // Android API doesn't provide voice version
                     voiceInfo.put("languages", JSONArray().put(voice.locale.toLanguageTag()))
-                    voiceInfo.put("speakers", JSONObject.NULL as Any?) // Android API doesn't provide speaker info
+                    voiceInfo.put("speakers", JSONObject.NULL) // Android API doesn't provide speaker info
 
                     voicesArray.put(voiceInfo)
                 }
