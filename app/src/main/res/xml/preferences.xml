@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory
+        app:title="@string/pref_category_network_title">
+
+        <EditTextPreference
+            app:key="service_name"
+            app:title="@string/pref_service_name_title"
+            app:summary="@string/pref_service_name_summary"
+            app:defaultValue="Wyoming Android TTS"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="service_port"
+            app:title="@string/pref_service_port_title"
+            app:summary="@string/pref_service_port_summary"
+            app:defaultValue="10300"
+            app:useSimpleSummaryProvider="true"
+            app:inputType="number" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>
