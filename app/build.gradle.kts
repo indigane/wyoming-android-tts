@@ -30,6 +30,11 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    // Exclude dependencies info to fix "Problem: found extra signing block 'Dependency metadata'" in F-Droid.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
     signingConfigs {
         create("release") {
             if (System.getenv("KEYSTORE_PATH") != null) {
