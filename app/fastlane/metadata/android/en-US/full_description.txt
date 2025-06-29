@@ -1,0 +1,5 @@
+Use your Android device's Text-to-Speech (TTS) engines in Home Assistant.
+
+This app acts as a Wyoming protocol server, allowing you to use any TTS engine installed on your Android phone or tablet—including Google's offline voices.
+
+To use it, install the app, start the server, and add the "Wyoming Android TTS" service to the Wyoming integration in Home Assistant.

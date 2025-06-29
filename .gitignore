@@ -73,9 +73,6 @@ lint-results.xml
 report.html
 report.txt
 
-# Generated play store metadata
-metadata/
-
 # Gradle dependency caching
 /gradle/
 /build/
