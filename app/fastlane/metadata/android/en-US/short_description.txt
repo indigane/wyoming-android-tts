@@ -1,1 +1,1 @@
-Expose your Android's TTS engines to Home Assistant via the Wyoming protocol.
+Use your Android's TTS engines in Home Assistant via the Wyoming protocol.
