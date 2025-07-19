@@ -1,5 +1,9 @@
 # Wyoming Android TTS
 
+<a href="https://f-droid.org/packages/home.wyoming_android_tts.indigane/">
+  <img src="https://f-droid.org/badge/get-it-on.png" alt="Get it on F-Droid" height="80">
+</a>
+
 Brings the power of your Android device's Text-to-Speech (TTS) engines to Home Assistant. This app acts as a Wyoming protocol server, allowing you to use any TTS engine installed on your Android phone or tablet—including Google's high-quality offline voices—as a seamless part of your smart home.
 
 ![2025-06-28_22-21-34](https://github.com/user-attachments/assets/5188290a-5f51-4741-9660-87c2110890c0)
